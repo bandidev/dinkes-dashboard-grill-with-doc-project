@@ -1,4 +1,4 @@
-import { AlertTriangle, ArrowLeft, CheckCircle2, ListChecks, LockKeyhole, RotateCcw, Save, Table2 } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, ListChecks, LockKeyhole, RotateCcw, Save, Table2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { Link, useBlocker, useParams, useSearchParams } from 'react-router-dom'
 import { api, type IndicatorRow, type ReportingTableDetail, type TableOneWorksheet } from '../api'
@@ -7,8 +7,10 @@ import { ErrorState, LoadingState } from '../components/states'
 import { StatusBadge } from '../components/status'
 import { TableOneWorksheetView } from '../components/table-one-worksheet'
 import { Button } from '../components/ui/button'
+import { FeedbackBanner } from '../components/ui/feedback-banner'
 import { Input } from '../components/ui/field'
 import { Panel } from '../components/ui/panel'
+import { ReasonDialog } from '../components/ui/reason-dialog'
 import { demoTableDetail } from '../demo-data'
 import { useApiData } from '../hooks/use-api-data'
 
@@ -20,17 +22,19 @@ export function ReportingDetailPage() {
   const preview = session?.token.startsWith('preview-') ? demoTableDetail(id, year) : undefined
   const { data, error, loading } = useApiData(() => api.reportingTable(session!.token, id, year), [session?.token, id, year], preview)
   const [detail, setDetail] = useState<ReportingTableDetail | null>(preview || null)
-  const [notice, setNotice] = useState('')
+  const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [saving, setSaving] = useState(false)
   const [changingStatus, setChangingStatus] = useState(false)
   const [worksheetBusy, setWorksheetBusy] = useState(false)
   const [formDirty, setFormDirty] = useState(false)
+  const [dirtyRows, setDirtyRows] = useState<string[]>([])
   const [selectedHeaders, setSelectedHeaders] = useState<string[]>([])
   const [inputMode, setInputMode] = useState<'form' | 'worksheet'>('form')
+  const [statusDialog, setStatusDialog] = useState<'reopen' | 'unverify' | null>(null)
   const hasUnsavedChanges = formDirty || worksheetBusy
   const blocker = useBlocker(hasUnsavedChanges)
 
-  useEffect(() => { if (data) { setDetail(data); setFormDirty(false) } }, [data])
+  useEffect(() => { if (data) { setDetail(data); setFormDirty(false); setDirtyRows([]) } }, [data])
   useEffect(() => {
     if (!hasUnsavedChanges) return
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -45,6 +49,7 @@ export function ReportingDetailPage() {
     const method = formDirty ? 'Input Ringkas' : 'Tabel Lengkap'
     if (window.confirm(`Perubahan ${method} belum tersimpan. Tinggalkan halaman dan abaikan perubahan?`)) {
       setFormDirty(false)
+      setDirtyRows([])
       blocker.proceed()
     } else blocker.reset()
   }, [blocker, formDirty])
@@ -62,7 +67,8 @@ export function ReportingDetailPage() {
   function updateRow(next: IndicatorRow) {
     setDetail((current) => current ? { ...current, rows: current.rows.map((row) => row.id === next.id ? next : row) } : current)
     setFormDirty(true)
-    setNotice('')
+    setDirtyRows((current) => current.includes(next.id) ? current : [...current, next.id])
+    setNotice(null)
   }
 
   async function save() {
@@ -71,15 +77,17 @@ export function ReportingDetailPage() {
     try {
       if (session!.token.startsWith('preview-')) {
         setFormDirty(false)
-        setNotice('Draft tersimpan pada pratinjau sesi ini.')
+        setDirtyRows([])
+        setNotice({ tone: 'success', message: 'Draft tersimpan pada pratinjau sesi ini.' })
       }
       else {
         setDetail(await api.saveTable(session!.token, detail))
         setFormDirty(false)
-        setNotice('Draft berhasil disimpan.')
+        setDirtyRows([])
+        setNotice({ tone: 'success', message: 'Draft berhasil disimpan. Semua perubahan sudah aman.' })
       }
     } catch (reason) {
-      setNotice(reason instanceof Error ? reason.message : 'Gagal menyimpan draft.')
+      setNotice({ tone: 'error', message: reason instanceof Error ? reason.message : 'Gagal menyimpan draft.' })
     } finally {
       setSaving(false)
     }
@@ -87,24 +95,28 @@ export function ReportingDetailPage() {
 
   async function changeStatus(action: 'complete' | 'reopen' | 'verify' | 'unverify') {
     if (!detail) return
-    const reason = action === 'reopen' || action === 'unverify'
-      ? window.prompt(action === 'reopen' ? 'Alasan Perbaiki Input' : 'Alasan pembatalan Verifikasi')
-      : undefined
-    if ((action === 'reopen' || action === 'unverify') && !reason?.trim()) return
+    if (action === 'reopen' || action === 'unverify') { setStatusDialog(action); return }
+    await submitStatusChange(action)
+  }
+
+  async function submitStatusChange(action: 'complete' | 'reopen' | 'verify' | 'unverify', reason?: string) {
+    if (!detail) return
 
     if (session!.token.startsWith('preview-')) {
       const status = action === 'verify' ? 'verified' : action === 'complete' || action === 'unverify' ? 'completed' : 'not_started'
       setDetail({ ...detail, status })
-      setNotice('Status Tabel Pelaporan berhasil diperbarui.')
+      setStatusDialog(null)
+      setNotice({ tone: 'success', message: 'Status Tabel Pelaporan berhasil diperbarui.' })
       return
     }
 
     setChangingStatus(true)
     try {
       setDetail(await api.setTableStatus(session!.token, detail, action, reason || undefined))
-      setNotice('Status Tabel Pelaporan berhasil diperbarui.')
+      setStatusDialog(null)
+      setNotice({ tone: 'success', message: 'Status Tabel Pelaporan berhasil diperbarui.' })
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : 'Perubahan status gagal.')
+      setNotice({ tone: 'error', message: cause instanceof Error ? cause.message : 'Perubahan status gagal.' })
     } finally {
       setChangingStatus(false)
     }
@@ -115,9 +127,9 @@ export function ReportingDetailPage() {
     setSaving(true)
     try {
       setDetail(await api.mapIndicators(session!.token, detail, selectedHeaders))
-      setNotice('Indikator berhasil dipetakan sebagai Nilai Dasar numerik. Tinjau kembali tipe dan satuannya melalui Katalog Indikator.')
+      setNotice({ tone: 'success', message: 'Indikator berhasil dipetakan sebagai Nilai Dasar numerik. Tinjau kembali tipe dan satuannya melalui Katalog Indikator.' })
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : 'Pemetaan Indikator gagal.')
+      setNotice({ tone: 'error', message: cause instanceof Error ? cause.message : 'Pemetaan Indikator gagal.' })
     } finally {
       setSaving(false)
     }
@@ -130,7 +142,7 @@ export function ReportingDetailPage() {
       setDetail(await api.reportingTable(session!.token, detail.reportingTableId, detail.year))
       setInputMode('form')
     } catch (cause) {
-      setNotice(cause instanceof Error ? cause.message : 'Form Indikator gagal dimuat.')
+      setNotice({ tone: 'error', message: cause instanceof Error ? cause.message : 'Form Indikator gagal dimuat.' })
     } finally {
       setSaving(false)
     }
@@ -140,6 +152,7 @@ export function ReportingDetailPage() {
     if (saving || worksheetBusy || inputMode === 'worksheet') return
     if (formDirty && !window.confirm('Perubahan Input Ringkas belum disimpan. Beralih ke Tabel Lengkap dan abaikan perubahan?')) return
     setFormDirty(false)
+    setDirtyRows([])
     setInputMode('worksheet')
   }
 
@@ -174,27 +187,28 @@ export function ReportingDetailPage() {
       </div>
 
       {hasWorksheet ? <div className="mb-4 flex flex-col justify-between gap-3 border-y border-line-soft py-3 sm:flex-row sm:items-center"><div><p className="text-xs font-bold">Metode input</p><p className="mt-0.5 text-[11px] text-ink-muted">Pilih tampilan kerja yang paling sesuai.</p></div><div className="grid w-full grid-cols-2 gap-2 sm:w-auto" role="group" aria-label="Metode input Tabel Pelaporan 1"><button type="button" disabled={saving || worksheetBusy} className={`flex min-h-14 items-center gap-2 rounded-[3px] border px-3 py-2 text-left transition-colors focus-visible:outline focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-44 ${inputMode === 'form' ? 'border-archive bg-archive-soft text-archive' : 'border-line bg-paper-raised text-ink-muted hover:border-archive hover:text-archive'}`} aria-pressed={inputMode === 'form'} onClick={showForm}><ListChecks className="size-4 shrink-0" aria-hidden="true" /><span><span className="block text-xs font-bold">Input Ringkas</span><span className="block text-[10px] font-medium">Wilayah Anda · Disarankan</span></span></button><button type="button" disabled={saving || worksheetBusy} className={`flex min-h-14 items-center gap-2 rounded-[3px] border px-3 py-2 text-left transition-colors focus-visible:outline focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-50 sm:min-w-44 ${inputMode === 'worksheet' ? 'border-archive bg-archive-soft text-archive' : 'border-line bg-paper-raised text-ink-muted hover:border-archive hover:text-archive'}`} aria-pressed={inputMode === 'worksheet'} onClick={showWorksheet}><Table2 className="size-4 shrink-0" aria-hidden="true" /><span><span className="block text-xs font-bold">Tabel Lengkap</span><span className="block text-[10px] font-medium">Semua Kabupaten/Kota</span></span></button></div></div> : null}
-      {detail.mappingStatus === 'pending' ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>Indikator tabel ini masih perlu dipetakan.</strong> Administrator harus memvalidasi header workbook sebelum Operator dapat menginput data.</p></div> : null}
+      {detail.mappingStatus === 'pending' ? <FeedbackBanner className="mb-4" tone="warning" title="Indikator belum siap diinput">Administrator harus memvalidasi header workbook sebelum Operator dapat menginput data.</FeedbackBanner> : null}
       {isAdmin && detail.mappingStatus === 'pending' ? <Panel className="mb-4 overflow-hidden"><div className="border-b border-line p-4"><p className="text-sm font-bold">Kandidat Header Workbook</p><p className="mt-1 text-xs text-ink-muted">Pilih hanya kolom yang benar-benar merupakan Nilai Dasar. Total, jumlah, rasio, dan persentase turunan jangan dipilih.</p></div><div className="grid gap-px bg-line-soft sm:grid-cols-2 xl:grid-cols-3">{detail.headerCandidates.map((header) => <label key={header} className="flex items-start gap-2 bg-paper-raised p-3 text-xs"><input type="checkbox" checked={selectedHeaders.includes(header)} onChange={(event) => setSelectedHeaders((current) => event.target.checked ? [...current, header] : current.filter((item) => item !== header))} /><span>{header}</span></label>)}</div><div className="border-t border-line p-4"><Button onClick={mapIndicators} disabled={!selectedHeaders.length || saving}>{saving ? 'Memetakan…' : `Tetapkan ${selectedHeaders.length} Indikator`}</Button></div></Panel> : null}
-      {editable && (missing > 0 || (!detail.submissionId && !spreadsheetView)) ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>{missing > 0 ? <><strong>{missing} Nilai Indikator wajib belum diisi.</strong> Selesaikan nilai kosong atau tandai Tidak Berlaku dengan alasan.{!detail.submissionId && !spreadsheetView ? ' Setelah lengkap, simpan draft sebelum menyatakan Selesai Input.' : null}</> : <>Simpan draft terlebih dahulu sebelum menyatakan Selesai Input.</>}</p></div> : null}
-      {formDirty ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]" role="status"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>Perubahan belum disimpan.</strong> Pilih Simpan draft sebelum berpindah atau menyatakan Selesai Input.</p></div> : null}
-      {notice ? <p className="mb-4 rounded-[4px] border border-line bg-paper-raised px-4 py-3 text-xs" role="status">{notice}</p> : null}
+      {editable && (missing > 0 || (!detail.submissionId && !spreadsheetView)) ? <FeedbackBanner className="mb-4" tone="warning" title={`${missing || requiredRows.length} Nilai Indikator perlu diperhatikan`}>{missing > 0 ? <>Selesaikan nilai kosong atau tandai Tidak Berlaku dengan alasan.{!detail.submissionId && !spreadsheetView ? ' Setelah lengkap, simpan draft sebelum menyatakan Selesai Input.' : null}</> : <>Simpan draft terlebih dahulu sebelum menyatakan Selesai Input.</>}</FeedbackBanner> : null}
+      {formDirty ? <FeedbackBanner className="mb-4" tone="warning" title="Perubahan belum disimpan" role="status" action={<Button size="sm" className="w-full sm:w-auto" onClick={save} disabled={saving}><Save data-icon="inline-start" />{saving ? 'Menyimpan…' : 'Simpan sekarang'}</Button>}>Nilai yang berubah diberi penanda. Simpan draft sebelum berpindah atau menyatakan Selesai Input.</FeedbackBanner> : null}
+      {notice ? <FeedbackBanner className="mb-4" tone={notice.tone} title={notice.tone === 'success' ? 'Perubahan tersimpan' : notice.tone === 'error' ? 'Tindakan belum berhasil' : 'Informasi'} role={notice.tone === 'error' ? 'alert' : 'status'}>{notice.message}</FeedbackBanner> : null}
 
       {spreadsheetView ? <TableOneWorksheetView token={session!.token} reportingTableId={detail.reportingTableId} onSynced={syncWorksheet} onBusyChange={setWorksheetBusy} /> : <Panel className="overflow-hidden">
         <div className="grid grid-cols-2 border-b border-line bg-paper-inset text-[10px] font-bold uppercase tracking-[0.08em] text-ink-muted sm:grid-cols-4"><div className="border-r border-line-soft px-4 py-2">Wajib <span className="block font-mono text-base text-ink">{requiredRows.length}</span></div><div className="border-r border-line-soft px-4 py-2">Sudah Diisi <span className="block font-mono text-base text-ink">{requiredRows.length - missing}</span></div><div className="border-r border-line-soft px-4 py-2">Belum Lengkap <span className="block font-mono text-base text-correction">{missing}</span></div><div className="px-4 py-2">Kelengkapan <span className="block font-mono text-base text-ink">{requiredRows.length ? Math.round((requiredRows.length - missing) / requiredRows.length * 100) : 0}%</span></div></div>
-        {(['base', 'derived'] as const).map((kind) => <div key={kind}><div className="border-b border-line bg-paper-raised px-4 py-3"><h2 className="text-sm font-bold">{kind === 'base' ? 'Nilai Dasar' : 'Nilai Turunan'}</h2><p className="mt-0.5 text-[11px] text-ink-muted">{kind === 'base' ? 'Diisi oleh Operator Kabupaten/Kota.' : 'Dihitung otomatis dari Nilai Dasar.'}</p></div><div className="overflow-x-auto scrollbar-thin"><table className="w-full min-w-[680px] border-collapse text-left text-xs"><thead className="bg-paper-inset text-[10px] uppercase tracking-[0.08em] text-ink-muted"><tr><th className="px-4 py-2.5 font-bold">Indikator</th><th className="w-28 px-3 py-2.5 font-bold">Satuan</th><th className="w-72 px-4 py-2.5 font-bold">Nilai</th></tr></thead><tbody>{detail.rows.filter((row) => row.kind === kind).map((row) => <IndicatorTableRow key={row.id} row={row} editable={editable} onChange={updateRow} />)}</tbody></table></div></div>)}
+        {(['base', 'derived'] as const).map((kind) => <div key={kind}><div className="border-b border-line bg-paper-raised px-4 py-3"><h2 className="text-sm font-bold">{kind === 'base' ? 'Nilai Dasar' : 'Nilai Turunan'}</h2><p className="mt-0.5 text-[11px] text-ink-muted">{kind === 'base' ? 'Diisi oleh Operator Kabupaten/Kota.' : 'Dihitung otomatis dari Nilai Dasar.'}</p></div><div className="overflow-x-auto scrollbar-thin"><table className="w-full min-w-[680px] border-collapse text-left text-xs"><thead className="bg-paper-inset text-[10px] uppercase tracking-[0.08em] text-ink-muted"><tr><th className="px-4 py-2.5 font-bold">Indikator</th><th className="w-28 px-3 py-2.5 font-bold">Satuan</th><th className="w-72 px-4 py-2.5 font-bold">Nilai</th></tr></thead><tbody>{detail.rows.filter((row) => row.kind === kind).map((row) => <IndicatorTableRow key={row.id} row={row} editable={editable} dirty={dirtyRows.includes(row.id)} onChange={updateRow} />)}</tbody></table></div></div>)}
       </Panel>}
+      <ReasonDialog open={statusDialog !== null} title={statusDialog === 'unverify' ? 'Batalkan Verifikasi' : 'Perbaiki Input'} description={statusDialog === 'unverify' ? 'Tabel akan kembali ke status Sudah Diinput dan dapat ditinjau ulang. Alasan dicatat pada Riwayat Revisi.' : 'Tabel akan dibuka kembali agar Operator Kabupaten/Kota dapat memperbaiki Nilai Indikator.'} confirmLabel={statusDialog === 'unverify' ? 'Batalkan Verifikasi' : 'Buka untuk diperbaiki'} busy={changingStatus} onClose={() => setStatusDialog(null)} onConfirm={(reason) => { if (statusDialog) void submitStatusChange(statusDialog, reason) }} />
     </>
   )
 }
 
-function IndicatorTableRow({ row, editable, onChange }: { row: IndicatorRow; editable: boolean; onChange: (row: IndicatorRow) => void }) {
+function IndicatorTableRow({ row, editable, dirty, onChange }: { row: IndicatorRow; editable: boolean; dirty: boolean; onChange: (row: IndicatorRow) => void }) {
   return (
     <tr className="border-t border-line-soft align-top">
       <td className="px-4 py-3"><p className="font-semibold">{row.name}</p><p className="mt-1 text-[10px] text-ink-faint">{row.category} · {row.required ? 'Wajib' : 'Opsional'} · {row.code}</p></td>
       <td className="px-3 py-3 text-ink-muted">{row.unit}</td>
       <td className="px-4 py-2">
-        {row.kind === 'derived' ? <div className="flex h-9 items-center rounded-[3px] border border-line bg-paper-inset px-3 font-mono font-bold tabular">{row.value || 'Tidak Dapat Dihitung'}</div> : <div className="flex flex-col gap-2"><Input aria-label={`Nilai ${row.name}`} type={row.dataType === 'date' ? 'date' : 'text'} inputMode={row.dataType === 'numeric' ? 'decimal' : undefined} value={row.value} disabled={!editable || row.notApplicable} onChange={(event) => onChange({ ...row, value: event.target.value })} className="font-mono tabular" /><label className="flex items-center gap-2 text-[10px] font-semibold text-ink-muted"><input type="checkbox" checked={row.notApplicable} disabled={!editable} onChange={(event) => onChange({ ...row, notApplicable: event.target.checked, value: event.target.checked ? '' : row.value })} />Tidak Berlaku</label>{row.notApplicable ? <Input aria-label={`Alasan ${row.name} tidak berlaku`} placeholder="Alasan wajib" value={row.notApplicableReason} disabled={!editable} onChange={(event) => onChange({ ...row, notApplicableReason: event.target.value })} /> : null}</div>}
+        {row.kind === 'derived' ? <div className="flex h-9 items-center rounded-[3px] border border-line bg-paper-inset px-3 font-mono font-bold tabular">{row.value || 'Tidak Dapat Dihitung'}</div> : <div className="flex flex-col gap-2"><Input aria-label={`Nilai ${row.name}`} type={row.dataType === 'date' ? 'date' : 'text'} inputMode={row.dataType === 'numeric' ? 'decimal' : undefined} value={row.value} disabled={!editable || row.notApplicable} onChange={(event) => onChange({ ...row, value: event.target.value })} className={`font-mono tabular ${dirty ? 'border-pending bg-pending-soft/35 shadow-[inset_3px_0_0_var(--color-pending)] focus:border-pending focus:outline-pending/30' : ''}`} /><label className="flex items-center gap-2 text-[10px] font-semibold text-ink-muted"><input type="checkbox" checked={row.notApplicable} disabled={!editable} onChange={(event) => onChange({ ...row, notApplicable: event.target.checked, value: event.target.checked ? '' : row.value })} />Tidak Berlaku</label>{row.notApplicable ? <Input aria-label={`Alasan ${row.name} tidak berlaku`} placeholder="Alasan wajib" value={row.notApplicableReason} disabled={!editable} onChange={(event) => onChange({ ...row, notApplicableReason: event.target.value })} className={dirty ? 'border-pending bg-pending-soft/35' : ''} /> : null}</div>}
       </td>
     </tr>
   )

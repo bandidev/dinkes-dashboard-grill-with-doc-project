@@ -18,7 +18,7 @@ export function Button({ className, variant = 'primary', size = 'md', type = 'bu
     <button
       type={type}
       className={cn(
-        'inline-flex items-center justify-center gap-2 rounded-[3px] border font-semibold transition-colors focus-visible:outline focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-50',
+        'inline-flex items-center justify-center gap-2 rounded-[3px] border font-semibold transition-[color,background-color,border-color,transform] duration-150 focus-visible:outline focus-visible:outline-2 active:scale-[0.96] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100',
         size === 'sm' ? 'h-8 px-3 text-xs' : 'h-10 px-4 text-sm',
         variants[variant],
         className,

@@ -12,8 +12,9 @@ test('operator can choose compact input or full table for Table 1', async ({ pag
   await expect(page.getByRole('button', { name: /Input Ringkas/ })).toHaveAttribute('aria-pressed', 'true', { timeout: 60_000 })
   const reopen = page.getByRole('button', { name: 'Perbaiki Input' })
   if (await reopen.isVisible()) {
-    page.once('dialog', (dialog) => dialog.accept('Persiapan pengujian otomatis.'))
     await reopen.click()
+    await page.getByLabel('Alasan perubahan status').fill('Persiapan pengujian otomatis.')
+    await page.getByRole('button', { name: 'Buka untuk diperbaiki' }).click()
     await expect(page.getByRole('button', { name: 'Simpan draft' })).toBeVisible({ timeout: 30_000 })
   }
   await expect(page.getByLabel('Nilai Luas Wilayah')).toBeVisible()
@@ -38,9 +39,9 @@ test('operator can choose compact input or full table for Table 1', async ({ pag
   const request = response.request()
   const payload = request.postDataJSON() as { values: Array<{ indicator_id: number; value: string }> }
   expect(payload.values.at(-1)?.value).toBe(nextHouseholds)
-  const result = await response.json() as { values: Array<{ indicator_id: number; numeric_value: number }> }
+  const result = await response.json() as { values: Array<{ indicator_id: number; numeric_value: number | string }> }
   const householdIndicator = payload.values.at(-1)!.indicator_id
-  expect(result.values.find((value) => value.indicator_id === householdIndicator)?.numeric_value).toBe(Number(nextHouseholds))
+  expect(Number(result.values.find((value) => value.indicator_id === householdIndicator)?.numeric_value)).toBe(Number(nextHouseholds))
 
   await expect(page.getByRole('status')).toContainText(/tersimpan/i)
   await expect(households).toHaveValue(nextHouseholds)
@@ -103,15 +104,16 @@ test('operator must save compact input before leaving or completing Table 1', as
   await expect(page).toHaveURL(/\/reporting-tables\/1(?:\?|$)/)
   const reopen = page.getByRole('button', { name: 'Perbaiki Input' })
   if (await reopen.isVisible()) {
-    page.once('dialog', (dialog) => dialog.accept('Persiapan pengujian otomatis.'))
     await reopen.click()
+    await page.getByLabel('Alasan perubahan status').fill('Persiapan pengujian otomatis.')
+    await page.getByRole('button', { name: 'Buka untuk diperbaiki' }).click()
   }
 
   const area = page.getByLabel('Nilai Luas Wilayah')
   await expect(area).toBeVisible({ timeout: 60_000 })
   await expect(area).toBeEnabled()
   await area.fill(String(Number(await area.inputValue()) + 0.1))
-  await expect(page.getByText('Perubahan belum disimpan.')).toBeVisible()
+  await expect(page.getByText('Perubahan belum disimpan')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Selesai Input' })).toBeDisabled()
 
   page.on('dialog', async (dialog) => {
@@ -126,7 +128,7 @@ test('operator must save compact input before leaving or completing Table 1', as
   const saved = page.waitForResponse((response) => response.url().endsWith('/api/submissions/draft') && response.ok())
   await page.getByRole('button', { name: 'Simpan draft' }).click()
   await saved
-  await expect(page.getByText('Perubahan belum disimpan.')).toHaveCount(0, { timeout: 30_000 })
+  await expect(page.getByText('Perubahan belum disimpan')).toHaveCount(0, { timeout: 30_000 })
   await page.getByRole('link', { name: 'Dashboard' }).click()
   await expect(page).toHaveURL(/\/dashboard$/)
 })

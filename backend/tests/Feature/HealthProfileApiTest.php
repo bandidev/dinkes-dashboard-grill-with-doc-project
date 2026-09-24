@@ -165,6 +165,40 @@ class HealthProfileApiTest extends TestCase
             ->assertJsonPath('rows.1.editable', false);
     }
 
+    public function test_partial_draft_save_preserves_other_indicator_not_applicable_state(): void
+    {
+        [$operator, , $table, $indicator] = $this->scenario();
+        $other = Indicator::create([
+            'reporting_table_id' => $table->id,
+            'code' => 'I02',
+            'name' => 'Indikator Lain',
+            'data_type' => 'numeric',
+        ]);
+        Sanctum::actingAs($operator);
+
+        $draft = $this->postJson('/api/submissions/draft', [
+            'reporting_table_id' => $table->id,
+            'version' => 0,
+            'values' => [
+                ['indicator_id' => $indicator->id, 'value' => 12],
+                ['indicator_id' => $other->id, 'not_applicable' => true, 'not_applicable_reason' => 'Tidak tersedia di wilayah ini.'],
+            ],
+        ])->assertOk()->json();
+
+        $this->postJson('/api/submissions/draft', [
+            'reporting_table_id' => $table->id,
+            'version' => $draft['version'],
+            'values' => [['indicator_id' => $indicator->id, 'value' => 13]],
+        ])->assertOk();
+
+        $this->assertDatabaseHas('indicator_values', [
+            'submission_id' => $draft['id'],
+            'indicator_id' => $other->id,
+            'not_applicable' => true,
+            'not_applicable_reason' => 'Tidak tersedia di wilayah ini.',
+        ]);
+    }
+
     private function scenario(): array
     {
         $regionA = Region::create(['code' => 'A', 'name' => 'Kabupaten A']);

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test'
 
-test('operator can choose form or Excel worksheet for Table 1', async ({ page }) => {
+test('operator can choose compact input or full table for Table 1', async ({ page }) => {
   test.setTimeout(60_000)
   await page.goto('/login')
   await page.getByLabel('Alamat email').fill('operator.bangka@example.com')
@@ -9,11 +9,11 @@ test('operator can choose form or Excel worksheet for Table 1', async ({ page })
   await expect(page).toHaveURL(/\/dashboard$/)
 
   await page.goto('/reporting-tables/1')
-  await expect(page.getByRole('button', { name: 'Form Indikator' })).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
+  await expect(page.getByRole('button', { name: /Input Ringkas/ })).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 })
   await expect(page.getByLabel('Nilai Luas Wilayah')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Simpan draft' })).toBeVisible()
 
-  await page.getByRole('button', { name: 'Worksheet Excel' }).click()
+  await page.getByRole('button', { name: 'Tabel Lengkap' }).click()
   await expect(page.getByRole('table')).toContainText('BELITUNG TIMUR', { timeout: 30_000 })
   await expect(page.getByRole('table')).toContainText('PANGKALPINANG')
   await expect(page.getByRole('textbox')).toHaveCount(5)
@@ -32,15 +32,36 @@ test('operator can choose form or Excel worksheet for Table 1', async ({ page })
   const householdIndicator = payload.values.at(-1)!.indicator_id
   expect(result.values.find((value) => value.indicator_id === householdIndicator)?.numeric_value).toBe(Number(nextHouseholds))
 
-  await expect(page.getByRole('status')).toContainText('Tersimpan')
-  const bangka = page.getByRole('row').filter({ hasText: 'BANGKA' }).first()
-  await expect(bangka).toContainText('81')
-  await expect(bangka).toContainText('3.1')
-  await expect(bangka).toContainText('114.5')
+  await expect(page.getByRole('status')).toContainText(/tersimpan/i)
+  await expect(households).toHaveValue(nextHouseholds)
   await expect(page.getByRole('button', { name: 'Simpan draft' })).toHaveCount(0)
 
-  await page.getByRole('button', { name: 'Form Indikator' }).click()
+  let delayed = true
+  await page.route('**/api/submissions/draft', async (route) => {
+    if (delayed) {
+      delayed = false
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    await route.continue()
+  })
+  const villages = page.getByLabel('Desa Bangka')
+  const wards = page.getByLabel('Kelurahan Bangka')
+  const nextVillages = String(Number(await villages.inputValue()) + 1)
+  const nextWards = String(Number(await wards.inputValue()) + 1)
+  await villages.fill(nextVillages)
+  await villages.press('Enter')
+  await wards.fill(nextWards)
+  await wards.press('Enter')
+  await expect(page.getByRole('status')).toContainText(/tersimpan/i, { timeout: 30_000 })
+
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true)
+  expect((await households.boundingBox())?.height).toBeGreaterThanOrEqual(44)
+
+  await page.getByRole('button', { name: /Input Ringkas/ }).click()
   await expect(page.getByLabel('Nilai Jumlah Rumah Tangga')).toHaveValue(nextHouseholds, { timeout: 30_000 })
+  await expect(page.getByLabel('Nilai Jumlah Desa')).toHaveValue(nextVillages)
+  await expect(page.getByLabel('Nilai Jumlah Kelurahan')).toHaveValue(nextWards)
   await expect(page.getByRole('button', { name: 'Simpan draft' })).toBeVisible()
   await page.screenshot({ path: 'test-results/table-one-worksheet.png', fullPage: true })
 })

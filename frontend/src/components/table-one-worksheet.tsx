@@ -14,22 +14,41 @@ const columns = [
 
 const baseCodes = new Set(['LUAS_WILAYAH', 'JUMLAH_DESA', 'JUMLAH_KELURAHAN', 'JUMLAH_PENDUDUK', 'JUMLAH_RUMAH_TANGGA'])
 
-export function TableOneWorksheetView({ token, reportingTableId }: { token: string; reportingTableId: string }) {
+type SaveState = 'idle' | 'dirty' | 'saving' | 'saved' | 'error'
+
+export function TableOneWorksheetView({ token, reportingTableId, onSynced, onBusyChange }: { token: string; reportingTableId: string; onSynced: (worksheet: TableOneWorksheet) => void; onBusyChange: (busy: boolean) => void }) {
   const [worksheet, setWorksheet] = useState<TableOneWorksheet | null>(null)
-  const [message, setMessage] = useState('')
+  const [saveState, setSaveState] = useState<SaveState>('idle')
+  const [error, setError] = useState('')
   const worksheetRef = useRef<TableOneWorksheet | null>(null)
-  const savedValuesRef = useRef<Record<string, string>>({})
-  const savingRef = useRef(false)
+  const queueRef = useRef(new Map<string, string>())
+  const processingRef = useRef(false)
 
   useEffect(() => {
-    void api.tableOneWorksheet(token, reportingTableId).then((data) => {
-      setWorksheet(data)
-      worksheetRef.current = data
-      savedValuesRef.current = editableValues(data)
-    }).catch((error) => setMessage(error instanceof Error ? error.message : 'Worksheet tidak dapat dimuat.'))
+    void loadWorksheet()
+    // The worksheet is reloaded only when its table identity changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [token, reportingTableId])
 
-  if (!worksheet) return <div className="worksheet-loading" role="status">{message || 'Memuat worksheet…'}</div>
+  async function loadWorksheet() {
+    setError('')
+    setSaveState('idle')
+    try {
+      const data = await api.tableOneWorksheet(token, reportingTableId)
+      setWorksheet(data)
+      worksheetRef.current = data
+      queueRef.current.clear()
+      processingRef.current = false
+      onSynced(data)
+      onBusyChange(false)
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Tampilan tabel lengkap tidak dapat dimuat.')
+      setSaveState('error')
+      onBusyChange(true)
+    }
+  }
+
+  if (!worksheet) return <div className="worksheet-loading" role={saveState === 'error' ? 'alert' : 'status'}>{error || 'Memuat tampilan tabel lengkap…'}</div>
 
   const editableRow = worksheet.rows.find((row) => row.editable)
   const updateValue = (row: WorksheetRow, code: string, value: string) => {
@@ -37,37 +56,49 @@ export function TableOneWorksheetView({ token, reportingTableId }: { token: stri
     const next = { ...worksheet, rows: worksheet.rows.map((item) => item.regionId === row.regionId ? { ...item, values: { ...item.values, [indicatorId]: value } } : item) }
     worksheetRef.current = next
     setWorksheet(next)
-    setMessage('Belum disimpan')
+    setSaveState('dirty')
+    onBusyChange(true)
   }
-  const save = async (row: WorksheetRow, code: string, value: string) => {
-    const current = worksheetRef.current
-    if (!current || savingRef.current) return
-    const indicatorId = current.indicators[code]
-    const next = { ...current, rows: current.rows.map((item) => item.regionId === row.regionId ? { ...item, values: { ...item.values, [indicatorId]: value } } : item) }
-    const nextRow = next.rows.find((item) => item.regionId === row.regionId)!
-    if (JSON.stringify(editableValues(next)) === JSON.stringify(savedValuesRef.current)) return
-    worksheetRef.current = next
-    setWorksheet(next)
-    savingRef.current = true
-    setMessage('Menyimpan…')
-    try {
-      const server = await api.saveWorksheetRow(token, next, nextRow)
-      worksheetRef.current = server
-      savedValuesRef.current = editableValues(server)
-      setWorksheet(server)
-      setMessage('Tersimpan')
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'Gagal menyimpan.')
-    } finally {
-      savingRef.current = false
+  const processQueue = async () => {
+    if (processingRef.current) return
+    processingRef.current = true
+    setSaveState('saving')
+    setError('')
+    while (queueRef.current.size) {
+      const [code, value] = queueRef.current.entries().next().value as [string, string]
+      queueRef.current.delete(code)
+      const current = worksheetRef.current!
+      const row = current.rows.find((item) => item.editable)!
+      try {
+        const server = await api.saveWorksheetCell(token, current, row, current.indicators[code], value)
+        const pendingValues = new Map(queueRef.current)
+        const next = pendingValues.size ? applyPendingValues(server, pendingValues) : server
+        worksheetRef.current = next
+        setWorksheet(next)
+        onSynced(server)
+      } catch (reason) {
+        queueRef.current.set(code, value)
+        setError(reason instanceof Error ? `${reason.message} Muat ulang data sebelum melanjutkan.` : 'Nilai belum tersimpan. Muat ulang data sebelum melanjutkan.')
+        setSaveState('error')
+        processingRef.current = false
+        onBusyChange(true)
+        return
+      }
     }
+    processingRef.current = false
+    setSaveState('saved')
+    onBusyChange(false)
+  }
+  const queueSave = (code: string, value: string) => {
+    queueRef.current.set(code, value)
+    void processQueue()
   }
 
   return (
     <section className="worksheet-shell" aria-label="Worksheet Tabel 1">
       <div className="worksheet-toolbar">
-        <span>{editableRow ? `Baris aktif: ${shortRegion(editableRow.regionName)}` : 'Mode baca'}</span>
-        <span className={message === 'Tersimpan' ? 'worksheet-saved' : ''} role="status">{message || 'Klik sel putih untuk mengubah nilai'}</span>
+        <span>{editableRow ? `Wilayah Anda: ${shortRegion(editableRow.regionName)}` : 'Mode baca'}</span>
+        <span className={saveState === 'saved' ? 'worksheet-saved' : saveState === 'error' ? 'worksheet-error' : ''} role={saveState === 'error' ? 'alert' : 'status'}>{saveState === 'dirty' ? 'Belum tersimpan' : saveState === 'saving' ? 'Menyimpan…' : saveState === 'saved' ? 'Semua perubahan tersimpan' : saveState === 'error' ? <>{error} <button type="button" className="worksheet-reload" onClick={() => void loadWorksheet()}>Muat ulang</button></> : 'Pilih sel berwarna kuning untuk mengubah nilai'}</span>
       </div>
       <div className="worksheet-scroll scrollbar-thin">
         <div className="worksheet-page">
@@ -86,7 +117,7 @@ export function TableOneWorksheetView({ token, reportingTableId }: { token: stri
             <tbody>
               {worksheet.rows.map((row, index) => <tr key={row.regionId} className={row.editable ? 'worksheet-active-row' : ''}>
                 <td>{index + 1}</td><th>{shortRegion(row.regionName).toUpperCase()}</th>
-                {columns.map(([code, label]) => <WorksheetCell key={code} row={row} code={code} label={label} indicatorId={worksheet.indicators[code]} onChange={updateValue} onSave={(value) => void save(row, code, value)} />)}
+                {columns.map(([code, label]) => <WorksheetCell key={code} row={row} code={code} label={label} indicatorId={worksheet.indicators[code]} onChange={updateValue} onSave={(value) => queueSave(code, value)} />)}
               </tr>)}
               <WorksheetTotal worksheet={worksheet} />
             </tbody>
@@ -117,12 +148,8 @@ function WorksheetTotal({ worksheet }: { worksheet: TableOneWorksheet }) {
   return <tr className="worksheet-total"><th colSpan={2}>KABUPATEN/KOTA</th>{columns.map(([code]) => <td key={code}>{formatNumber(String(totals[code]), code)}</td>)}</tr>
 }
 
-function editableValues(worksheet: TableOneWorksheet) {
-  const values = worksheet.rows.find((row) => row.editable)?.values || {}
-  return Object.fromEntries([...baseCodes].map((code) => {
-    const value = values[worksheet.indicators[code]] || ''
-    return [worksheet.indicators[code], value === '' ? '' : String(Number(value))]
-  }))
+function applyPendingValues(worksheet: TableOneWorksheet, pending: Map<string, string>) {
+  return { ...worksheet, rows: worksheet.rows.map((row) => row.editable ? { ...row, values: { ...row.values, ...Object.fromEntries([...pending].map(([code, value]) => [worksheet.indicators[code], value])) } } : row) }
 }
 
 function shortRegion(name: string) {

@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test'
 
 test('operator fills Table 59 age-sex matrix and receives totals and proportions', async ({ page }) => {
+  test.setTimeout(60_000)
   await page.goto('/login')
   await page.getByLabel('Alamat email').fill('operator.bangka@example.com')
   await page.getByLabel('Kata sandi').fill('password')

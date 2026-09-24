@@ -126,6 +126,7 @@ type ApiValue = {
   date_value: string | null
   not_applicable: boolean
   not_applicable_reason: string | null
+  indicator: Indicator
 }
 type ApiSubmission = {
   id: number
@@ -325,22 +326,36 @@ export const api = {
       })),
     }
   },
-  async saveWorksheetRow(token: string, worksheet: TableOneWorksheet, row: WorksheetRow) {
-    const baseCodes = ['LUAS_WILAYAH', 'JUMLAH_DESA', 'JUMLAH_KELURAHAN', 'JUMLAH_PENDUDUK', 'JUMLAH_RUMAH_TANGGA']
-    await request('/submissions/draft', {
+  async saveWorksheetCell(token: string, worksheet: TableOneWorksheet, row: WorksheetRow, indicatorId: string, value: string) {
+    const submission = await request<ApiSubmission>('/submissions/draft', {
       method: 'POST',
       body: JSON.stringify({
         reporting_table_id: Number(worksheet.reportingTableId),
         version: row.version,
-        values: baseCodes.map((code) => ({
-          indicator_id: Number(worksheet.indicators[code]),
-          value: row.values[worksheet.indicators[code]] || null,
+        values: [{
+          indicator_id: Number(indicatorId),
+          value: value || null,
           not_applicable: false,
           not_applicable_reason: null,
-        })),
+        }],
       }),
     }, token)
-    return api.tableOneWorksheet(token, worksheet.reportingTableId)
+    return {
+      ...worksheet,
+      rows: worksheet.rows.map((item) => item.regionId === row.regionId ? {
+        ...item,
+        submissionId: String(submission.id),
+        status: submission.status,
+        version: submission.version,
+        values: {
+          ...item.values,
+          ...Object.fromEntries(submission.values.map((saved) => [
+            String(saved.indicator_id),
+            valueText(saved, saved.indicator.data_type),
+          ])),
+        },
+      } : item),
+    }
   },
   async saveTable(token: string, detail: ReportingTableDetail) {
     await request('/submissions/draft', {

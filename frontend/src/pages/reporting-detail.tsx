@@ -1,7 +1,7 @@
 import { AlertTriangle, ArrowLeft, CheckCircle2, LockKeyhole, RotateCcw, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import { api, type IndicatorRow, type ReportingTableDetail } from '../api'
+import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { api, type IndicatorRow, type ReportingTableDetail, type TableOneWorksheet } from '../api'
 import { useAuth } from '../auth'
 import { ErrorState, LoadingState } from '../components/states'
 import { StatusBadge } from '../components/status'
@@ -14,13 +14,16 @@ import { useApiData } from '../hooks/use-api-data'
 
 export function ReportingDetailPage() {
   const { id = '1' } = useParams()
+  const [searchParams] = useSearchParams()
   const { session } = useAuth()
-  const year = 2024
+  const year = Number(searchParams.get('year')) || 2024
   const preview = session?.token.startsWith('preview-') ? demoTableDetail(id, year) : undefined
-  const { data, error, loading } = useApiData(() => api.reportingTable(session!.token, id, year), [session?.token, id], preview)
+  const { data, error, loading } = useApiData(() => api.reportingTable(session!.token, id, year), [session?.token, id, year], preview)
   const [detail, setDetail] = useState<ReportingTableDetail | null>(preview || null)
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
+  const [changingStatus, setChangingStatus] = useState(false)
+  const [worksheetBusy, setWorksheetBusy] = useState(false)
   const [selectedHeaders, setSelectedHeaders] = useState<string[]>([])
   const [inputMode, setInputMode] = useState<'form' | 'worksheet'>('form')
 
@@ -31,7 +34,8 @@ export function ReportingDetailPage() {
 
   const isAdmin = session?.user.role === 'administrator'
   const editable = detail.mappingStatus === 'ready' && !isAdmin && detail.status === 'not_started'
-  const missing = detail.rows.filter((row) => row.kind === 'base' && row.required && !row.notApplicable && !row.value).length
+  const requiredRows = detail.rows.filter((row) => row.kind === 'base' && row.required)
+  const missing = requiredRows.filter((row) => row.notApplicable ? !row.notApplicableReason.trim() : !row.value).length
   const hasWorksheet = detail.group === 'T01' && !session!.token.startsWith('preview-')
   const spreadsheetView = hasWorksheet && inputMode === 'worksheet'
 
@@ -70,11 +74,14 @@ export function ReportingDetailPage() {
       return
     }
 
+    setChangingStatus(true)
     try {
       setDetail(await api.setTableStatus(session!.token, detail, action, reason || undefined))
       setNotice('Status Tabel Pelaporan berhasil diperbarui.')
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : 'Perubahan status gagal.')
+    } finally {
+      setChangingStatus(false)
     }
   }
 
@@ -92,7 +99,7 @@ export function ReportingDetailPage() {
   }
 
   async function showForm() {
-    if (!detail || inputMode === 'form') return
+    if (!detail || inputMode === 'form' || worksheetBusy) return
     setSaving(true)
     try {
       setDetail(await api.reportingTable(session!.token, detail.reportingTableId, detail.year))
@@ -102,6 +109,18 @@ export function ReportingDetailPage() {
     } finally {
       setSaving(false)
     }
+  }
+
+  function syncWorksheet(worksheet: TableOneWorksheet) {
+    const row = worksheet.rows.find((item) => item.editable)
+    if (!row) return
+    setDetail((current) => current ? {
+      ...current,
+      submissionId: row.submissionId,
+      version: row.version,
+      status: row.status,
+      rows: current.rows.map((item) => ({ ...item, value: row.values[item.id] ?? item.value })),
+    } : current)
   }
 
   return (
@@ -116,28 +135,23 @@ export function ReportingDetailPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           {editable && !spreadsheetView ? <Button variant="outline" onClick={save} disabled={saving}><Save data-icon="inline-start" />{saving ? 'Menyimpan…' : 'Simpan draft'}</Button> : null}
-          {editable ? <Button onClick={() => changeStatus('complete')} disabled={missing > 0 || !detail.submissionId}><CheckCircle2 data-icon="inline-start" />Selesai Input</Button> : null}
-          {!isAdmin && detail.status === 'completed' ? <Button variant="outline" onClick={() => changeStatus('reopen')}><RotateCcw data-icon="inline-start" />Perbaiki Input</Button> : null}
-          {isAdmin && detail.status === 'completed' ? <Button onClick={() => changeStatus('verify')}><CheckCircle2 data-icon="inline-start" />Verifikasi</Button> : null}
-          {isAdmin && detail.status === 'verified' ? <Button variant="outline" onClick={() => changeStatus('unverify')}><RotateCcw data-icon="inline-start" />Batalkan Verifikasi</Button> : null}
+          {editable ? <Button onClick={() => changeStatus('complete')} disabled={missing > 0 || !detail.submissionId || worksheetBusy || changingStatus}><CheckCircle2 data-icon="inline-start" />{changingStatus ? 'Memproses…' : 'Selesai Input'}</Button> : null}
+          {!isAdmin && detail.status === 'completed' ? <Button variant="outline" disabled={changingStatus} onClick={() => changeStatus('reopen')}><RotateCcw data-icon="inline-start" />Perbaiki Input</Button> : null}
+          {isAdmin && detail.status === 'completed' ? <Button disabled={changingStatus} onClick={() => changeStatus('verify')}><CheckCircle2 data-icon="inline-start" />Verifikasi</Button> : null}
+          {isAdmin && detail.status === 'verified' ? <Button variant="outline" disabled={changingStatus} onClick={() => changeStatus('unverify')}><RotateCcw data-icon="inline-start" />Batalkan Verifikasi</Button> : null}
         </div>
       </div>
 
       {editable && !detail.submissionId && !spreadsheetView ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>Simpan draft terlebih dahulu sebelum menyatakan Selesai Input.</p></div> : null}
-      {hasWorksheet ? <div className="mb-4 flex flex-col justify-between gap-3 rounded-[4px] border border-line bg-paper-raised p-3 sm:flex-row sm:items-center"><div><p className="text-xs font-bold">Metode Input</p><p className="mt-0.5 text-[11px] text-ink-muted">Kedua metode menyimpan Nilai Indikator dan Riwayat Revisi yang sama.</p></div><div className="inline-flex self-start rounded-[3px] border border-line bg-paper-inset p-0.5" role="group" aria-label="Metode input Tabel 1"><button type="button" disabled={saving} className={`rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'form' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'form'} onClick={showForm}>Form Indikator</button><button type="button" disabled={saving} className={`rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'worksheet' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'worksheet'} onClick={() => setInputMode('worksheet')}>Worksheet Excel</button></div></div> : null}
+      {hasWorksheet ? <div className="mb-4 flex flex-col justify-between gap-3 rounded-[4px] border border-line bg-paper-raised p-3 sm:flex-row sm:items-center"><div><p className="text-xs font-bold">Pilih cara mengisi</p><p className="mt-0.5 text-[11px] text-ink-muted"><strong>Input Ringkas</strong> untuk fokus pada wilayah Anda. <strong>Tabel Lengkap</strong> untuk membandingkan seluruh Kabupaten/Kota.</p></div><div className="inline-flex self-start rounded-[3px] border border-line bg-paper-inset p-0.5" role="group" aria-label="Cara mengisi Tabel Pelaporan 1"><button type="button" disabled={saving || worksheetBusy} className={`min-h-10 rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'form' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'form'} onClick={showForm}>Input Ringkas <span className="block text-[9px] font-medium">Disarankan</span></button><button type="button" disabled={saving || worksheetBusy} className={`min-h-10 rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'worksheet' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'worksheet'} onClick={() => setInputMode('worksheet')}>Tabel Lengkap</button></div></div> : null}
       {detail.mappingStatus === 'pending' ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>Indikator tabel ini masih perlu dipetakan.</strong> Administrator harus memvalidasi header workbook sebelum Operator dapat menginput data.</p></div> : null}
       {isAdmin && detail.mappingStatus === 'pending' ? <Panel className="mb-4 overflow-hidden"><div className="border-b border-line p-4"><p className="text-sm font-bold">Kandidat Header Workbook</p><p className="mt-1 text-xs text-ink-muted">Pilih hanya kolom yang benar-benar merupakan Nilai Dasar. Total, jumlah, rasio, dan persentase turunan jangan dipilih.</p></div><div className="grid gap-px bg-line-soft sm:grid-cols-2 xl:grid-cols-3">{detail.headerCandidates.map((header) => <label key={header} className="flex items-start gap-2 bg-paper-raised p-3 text-xs"><input type="checkbox" checked={selectedHeaders.includes(header)} onChange={(event) => setSelectedHeaders((current) => event.target.checked ? [...current, header] : current.filter((item) => item !== header))} /><span>{header}</span></label>)}</div><div className="border-t border-line p-4"><Button onClick={mapIndicators} disabled={!selectedHeaders.length || saving}>{saving ? 'Memetakan…' : `Tetapkan ${selectedHeaders.length} Indikator`}</Button></div></Panel> : null}
       {missing > 0 && editable ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>{missing} Nilai Indikator wajib belum diisi.</strong> Selesaikan nilai kosong atau tandai Tidak Berlaku dengan alasan.</p></div> : null}
       {notice ? <p className="mb-4 rounded-[4px] border border-line bg-paper-raised px-4 py-3 text-xs" role="status">{notice}</p> : null}
 
-      {spreadsheetView ? <TableOneWorksheetView token={session!.token} reportingTableId={detail.reportingTableId} /> : <Panel className="overflow-hidden">
-        <div className="grid grid-cols-2 border-b border-line bg-paper-inset text-[10px] font-bold uppercase tracking-[0.08em] text-ink-muted sm:grid-cols-4"><div className="border-r border-line-soft px-4 py-2">Nilai Dasar <span className="block font-mono text-base text-ink">{detail.rows.filter((row) => row.kind === 'base').length}</span></div><div className="border-r border-line-soft px-4 py-2">Nilai Turunan <span className="block font-mono text-base text-ink">{detail.rows.filter((row) => row.kind === 'derived').length}</span></div><div className="border-r border-line-soft px-4 py-2">Wajib Kosong <span className="block font-mono text-base text-correction">{missing}</span></div><div className="px-4 py-2">Kelengkapan <span className="block font-mono text-base text-ink">{detail.rows.length ? Math.round((detail.rows.length - missing) / detail.rows.length * 100) : 0}%</span></div></div>
-        <div className="overflow-x-auto scrollbar-thin">
-          <table className="w-full min-w-[960px] border-collapse text-left text-xs">
-            <thead className="bg-paper-raised text-[10px] uppercase tracking-[0.08em] text-ink-muted"><tr><th className="w-24 px-4 py-2.5 font-bold">Kode</th><th className="px-3 py-2.5 font-bold">Indikator</th><th className="w-28 px-3 py-2.5 font-bold">Kategori</th><th className="w-28 px-3 py-2.5 font-bold">Satuan</th><th className="w-64 px-3 py-2.5 font-bold">Nilai</th><th className="w-28 px-4 py-2.5 font-bold">Sifat</th></tr></thead>
-            <tbody>{detail.rows.map((row) => <IndicatorTableRow key={row.id} row={row} editable={editable} onChange={updateRow} />)}</tbody>
-          </table>
-        </div>
+      {spreadsheetView ? <TableOneWorksheetView token={session!.token} reportingTableId={detail.reportingTableId} onSynced={syncWorksheet} onBusyChange={setWorksheetBusy} /> : <Panel className="overflow-hidden">
+        <div className="grid grid-cols-2 border-b border-line bg-paper-inset text-[10px] font-bold uppercase tracking-[0.08em] text-ink-muted sm:grid-cols-4"><div className="border-r border-line-soft px-4 py-2">Wajib <span className="block font-mono text-base text-ink">{requiredRows.length}</span></div><div className="border-r border-line-soft px-4 py-2">Sudah Diisi <span className="block font-mono text-base text-ink">{requiredRows.length - missing}</span></div><div className="border-r border-line-soft px-4 py-2">Belum Lengkap <span className="block font-mono text-base text-correction">{missing}</span></div><div className="px-4 py-2">Kelengkapan <span className="block font-mono text-base text-ink">{requiredRows.length ? Math.round((requiredRows.length - missing) / requiredRows.length * 100) : 0}%</span></div></div>
+        {(['base', 'derived'] as const).map((kind) => <div key={kind}><div className="border-b border-line bg-paper-raised px-4 py-3"><h2 className="text-sm font-bold">{kind === 'base' ? 'Nilai Dasar' : 'Nilai Turunan'}</h2><p className="mt-0.5 text-[11px] text-ink-muted">{kind === 'base' ? 'Diisi oleh Operator Kabupaten/Kota.' : 'Dihitung otomatis dari Nilai Dasar.'}</p></div><div className="overflow-x-auto scrollbar-thin"><table className="w-full min-w-[680px] border-collapse text-left text-xs"><thead className="bg-paper-inset text-[10px] uppercase tracking-[0.08em] text-ink-muted"><tr><th className="px-4 py-2.5 font-bold">Indikator</th><th className="w-28 px-3 py-2.5 font-bold">Satuan</th><th className="w-72 px-4 py-2.5 font-bold">Nilai</th></tr></thead><tbody>{detail.rows.filter((row) => row.kind === kind).map((row) => <IndicatorTableRow key={row.id} row={row} editable={editable} onChange={updateRow} />)}</tbody></table></div></div>)}
       </Panel>}
     </>
   )
@@ -146,14 +160,11 @@ export function ReportingDetailPage() {
 function IndicatorTableRow({ row, editable, onChange }: { row: IndicatorRow; editable: boolean; onChange: (row: IndicatorRow) => void }) {
   return (
     <tr className="border-t border-line-soft align-top">
-      <td className="px-4 py-3 font-mono font-bold text-archive">{row.code}</td>
-      <td className="px-3 py-3"><p className="font-semibold">{row.name}</p><p className="mt-1 text-[10px] uppercase tracking-[0.08em] text-ink-faint">{row.kind === 'base' ? 'Nilai Dasar' : 'Nilai Turunan'}</p></td>
-      <td className="px-3 py-3 text-ink-muted">{row.category}</td>
+      <td className="px-4 py-3"><p className="font-semibold">{row.name}</p><p className="mt-1 text-[10px] text-ink-faint">{row.category} · {row.required ? 'Wajib' : 'Opsional'} · {row.code}</p></td>
       <td className="px-3 py-3 text-ink-muted">{row.unit}</td>
-      <td className="px-3 py-2">
+      <td className="px-4 py-2">
         {row.kind === 'derived' ? <div className="flex h-9 items-center rounded-[3px] border border-line bg-paper-inset px-3 font-mono font-bold tabular">{row.value || 'Tidak Dapat Dihitung'}</div> : <div className="flex flex-col gap-2"><Input aria-label={`Nilai ${row.name}`} type={row.dataType === 'date' ? 'date' : 'text'} inputMode={row.dataType === 'numeric' ? 'decimal' : undefined} value={row.value} disabled={!editable || row.notApplicable} onChange={(event) => onChange({ ...row, value: event.target.value })} className="font-mono tabular" /><label className="flex items-center gap-2 text-[10px] font-semibold text-ink-muted"><input type="checkbox" checked={row.notApplicable} disabled={!editable} onChange={(event) => onChange({ ...row, notApplicable: event.target.checked, value: event.target.checked ? '' : row.value })} />Tidak Berlaku</label>{row.notApplicable ? <Input aria-label={`Alasan ${row.name} tidak berlaku`} placeholder="Alasan wajib" value={row.notApplicableReason} disabled={!editable} onChange={(event) => onChange({ ...row, notApplicableReason: event.target.value })} /> : null}</div>}
       </td>
-      <td className="px-4 py-3 text-ink-muted">{row.required ? 'Wajib' : 'Opsional'}</td>
     </tr>
   )
 }

@@ -22,6 +22,7 @@ export function ReportingDetailPage() {
   const [notice, setNotice] = useState('')
   const [saving, setSaving] = useState(false)
   const [selectedHeaders, setSelectedHeaders] = useState<string[]>([])
+  const [inputMode, setInputMode] = useState<'form' | 'worksheet'>('form')
 
   useEffect(() => { if (data) setDetail(data) }, [data])
 
@@ -31,7 +32,8 @@ export function ReportingDetailPage() {
   const isAdmin = session?.user.role === 'administrator'
   const editable = detail.mappingStatus === 'ready' && !isAdmin && detail.status === 'not_started'
   const missing = detail.rows.filter((row) => row.kind === 'base' && row.required && !row.notApplicable && !row.value).length
-  const spreadsheetView = detail.group === 'T01' && !session!.token.startsWith('preview-')
+  const hasWorksheet = detail.group === 'T01' && !session!.token.startsWith('preview-')
+  const spreadsheetView = hasWorksheet && inputMode === 'worksheet'
 
   function updateRow(next: IndicatorRow) {
     setDetail((current) => current ? { ...current, rows: current.rows.map((row) => row.id === next.id ? next : row) } : current)
@@ -89,6 +91,19 @@ export function ReportingDetailPage() {
     }
   }
 
+  async function showForm() {
+    if (!detail || inputMode === 'form') return
+    setSaving(true)
+    try {
+      setDetail(await api.reportingTable(session!.token, detail.reportingTableId, detail.year))
+      setInputMode('form')
+    } catch (cause) {
+      setNotice(cause instanceof Error ? cause.message : 'Form Indikator gagal dimuat.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
   return (
     <>
       <Link to="/reporting-tables" className="mb-4 inline-flex items-center gap-2 text-xs font-bold text-archive hover:underline"><ArrowLeft className="size-3.5" />Kembali ke Tabel Pelaporan</Link>
@@ -109,6 +124,7 @@ export function ReportingDetailPage() {
       </div>
 
       {editable && !detail.submissionId && !spreadsheetView ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>Simpan draft terlebih dahulu sebelum menyatakan Selesai Input.</p></div> : null}
+      {hasWorksheet ? <div className="mb-4 flex flex-col justify-between gap-3 rounded-[4px] border border-line bg-paper-raised p-3 sm:flex-row sm:items-center"><div><p className="text-xs font-bold">Metode Input</p><p className="mt-0.5 text-[11px] text-ink-muted">Kedua metode menyimpan Nilai Indikator dan Riwayat Revisi yang sama.</p></div><div className="inline-flex self-start rounded-[3px] border border-line bg-paper-inset p-0.5" role="group" aria-label="Metode input Tabel 1"><button type="button" disabled={saving} className={`rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'form' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'form'} onClick={showForm}>Form Indikator</button><button type="button" disabled={saving} className={`rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'worksheet' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'worksheet'} onClick={() => setInputMode('worksheet')}>Worksheet Excel</button></div></div> : null}
       {detail.mappingStatus === 'pending' ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>Indikator tabel ini masih perlu dipetakan.</strong> Administrator harus memvalidasi header workbook sebelum Operator dapat menginput data.</p></div> : null}
       {isAdmin && detail.mappingStatus === 'pending' ? <Panel className="mb-4 overflow-hidden"><div className="border-b border-line p-4"><p className="text-sm font-bold">Kandidat Header Workbook</p><p className="mt-1 text-xs text-ink-muted">Pilih hanya kolom yang benar-benar merupakan Nilai Dasar. Total, jumlah, rasio, dan persentase turunan jangan dipilih.</p></div><div className="grid gap-px bg-line-soft sm:grid-cols-2 xl:grid-cols-3">{detail.headerCandidates.map((header) => <label key={header} className="flex items-start gap-2 bg-paper-raised p-3 text-xs"><input type="checkbox" checked={selectedHeaders.includes(header)} onChange={(event) => setSelectedHeaders((current) => event.target.checked ? [...current, header] : current.filter((item) => item !== header))} /><span>{header}</span></label>)}</div><div className="border-t border-line p-4"><Button onClick={mapIndicators} disabled={!selectedHeaders.length || saving}>{saving ? 'Memetakan…' : `Tetapkan ${selectedHeaders.length} Indikator`}</Button></div></Panel> : null}
       {missing > 0 && editable ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>{missing} Nilai Indikator wajib belum diisi.</strong> Selesaikan nilai kosong atau tandai Tidak Berlaku dengan alasan.</p></div> : null}

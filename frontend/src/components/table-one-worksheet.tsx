@@ -20,8 +20,6 @@ export function TableOneWorksheetView({ token, reportingTableId }: { token: stri
   const worksheetRef = useRef<TableOneWorksheet | null>(null)
   const savedValuesRef = useRef<Record<string, string>>({})
   const savingRef = useRef(false)
-  const queuedSave = useRef(false)
-  const saveRef = useRef<() => void>(() => undefined)
 
   useEffect(() => {
     void api.tableOneWorksheet(token, reportingTableId).then((data) => {
@@ -41,38 +39,29 @@ export function TableOneWorksheetView({ token, reportingTableId }: { token: stri
     setWorksheet(next)
     setMessage('Belum disimpan')
   }
-  const save = async () => {
+  const save = async (row: WorksheetRow, code: string, value: string) => {
     const current = worksheetRef.current
-    const row = current?.rows.find((item) => item.editable)
-    if (!current || !row || JSON.stringify(editableValues(current)) === JSON.stringify(savedValuesRef.current)) return
-    if (savingRef.current) {
-      queuedSave.current = true
-      return
-    }
-    const sentValues = editableValues(current)
+    if (!current || savingRef.current) return
+    const indicatorId = current.indicators[code]
+    const next = { ...current, rows: current.rows.map((item) => item.regionId === row.regionId ? { ...item, values: { ...item.values, [indicatorId]: value } } : item) }
+    const nextRow = next.rows.find((item) => item.regionId === row.regionId)!
+    if (JSON.stringify(editableValues(next)) === JSON.stringify(savedValuesRef.current)) return
+    worksheetRef.current = next
+    setWorksheet(next)
     savingRef.current = true
     setMessage('Menyimpan…')
     try {
-      const server = await api.saveWorksheetRow(token, current, row)
-      const latest = worksheetRef.current || current
-      const changedWhileSaving = JSON.stringify(editableValues(latest)) !== JSON.stringify(sentValues)
-      const next = changedWhileSaving ? mergeEditableValues(server, latest) : server
-      worksheetRef.current = next
+      const server = await api.saveWorksheetRow(token, next, nextRow)
+      worksheetRef.current = server
       savedValuesRef.current = editableValues(server)
-      setWorksheet(next)
-      setMessage(changedWhileSaving ? 'Menyimpan perubahan berikutnya…' : 'Tersimpan')
-      queuedSave.current ||= changedWhileSaving
+      setWorksheet(server)
+      setMessage('Tersimpan')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'Gagal menyimpan.')
     } finally {
       savingRef.current = false
-      if (queuedSave.current) {
-        queuedSave.current = false
-        queueMicrotask(() => saveRef.current())
-      }
     }
   }
-  saveRef.current = save
 
   return (
     <section className="worksheet-shell" aria-label="Worksheet Tabel 1">
@@ -97,7 +86,7 @@ export function TableOneWorksheetView({ token, reportingTableId }: { token: stri
             <tbody>
               {worksheet.rows.map((row, index) => <tr key={row.regionId} className={row.editable ? 'worksheet-active-row' : ''}>
                 <td>{index + 1}</td><th>{shortRegion(row.regionName).toUpperCase()}</th>
-                {columns.map(([code, label]) => <WorksheetCell key={code} row={row} code={code} label={label} indicatorId={worksheet.indicators[code]} onChange={updateValue} onSave={save} />)}
+                {columns.map(([code, label]) => <WorksheetCell key={code} row={row} code={code} label={label} indicatorId={worksheet.indicators[code]} onChange={updateValue} onSave={(value) => void save(row, code, value)} />)}
               </tr>)}
               <WorksheetTotal worksheet={worksheet} />
             </tbody>
@@ -109,9 +98,9 @@ export function TableOneWorksheetView({ token, reportingTableId }: { token: stri
   )
 }
 
-function WorksheetCell({ row, code, label, indicatorId, onChange, onSave }: { row: WorksheetRow; code: string; label: string; indicatorId: string; onChange: (row: WorksheetRow, code: string, value: string) => void; onSave: () => void }) {
+function WorksheetCell({ row, code, label, indicatorId, onChange, onSave }: { row: WorksheetRow; code: string; label: string; indicatorId: string; onChange: (row: WorksheetRow, code: string, value: string) => void; onSave: (value: string) => void }) {
   const value = row.values[indicatorId] || ''
-  if (row.editable && baseCodes.has(code)) return <td className="worksheet-input-cell"><input aria-label={`${label} ${shortRegion(row.regionName)}`} inputMode="decimal" value={value} onChange={(event) => onChange(row, code, event.target.value)} onBlur={onSave} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} /></td>
+  if (row.editable && baseCodes.has(code)) return <td className="worksheet-input-cell"><input aria-label={`${label} ${shortRegion(row.regionName)}`} inputMode="decimal" value={value} onChange={(event) => onChange(row, code, event.target.value)} onBlur={(event) => onSave(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur() }} /></td>
   return <td className={baseCodes.has(code) ? '' : 'worksheet-formula'}>{formatNumber(value, code)}</td>
 }
 
@@ -129,13 +118,11 @@ function WorksheetTotal({ worksheet }: { worksheet: TableOneWorksheet }) {
 }
 
 function editableValues(worksheet: TableOneWorksheet) {
-  return worksheet.rows.find((row) => row.editable)?.values || {}
-}
-
-function mergeEditableValues(server: TableOneWorksheet, local: TableOneWorksheet) {
-  const localRow = local.rows.find((row) => row.editable)
-  if (!localRow) return server
-  return { ...server, rows: server.rows.map((row) => row.regionId === localRow.regionId ? { ...row, values: localRow.values } : row) }
+  const values = worksheet.rows.find((row) => row.editable)?.values || {}
+  return Object.fromEntries([...baseCodes].map((code) => {
+    const value = values[worksheet.indicators[code]] || ''
+    return [worksheet.indicators[code], value === '' ? '' : String(Number(value))]
+  }))
 }
 
 function shortRegion(name: string) {

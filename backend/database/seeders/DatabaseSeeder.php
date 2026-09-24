@@ -33,14 +33,23 @@ class DatabaseSeeder extends Seeder
             'role' => 'administrator',
             'region_id' => null,
         ]);
-        User::updateOrCreate(['email' => 'operator.bangka@example.com'], [
-            'name' => 'Operator Kabupaten Bangka',
-            'password' => Hash::make('password'),
-            'role' => 'operator',
-            'region_id' => $regions->firstWhere('code', 'BANGKA')->id,
-        ]);
+        foreach ([
+            'BANGKA' => ['Operator Kabupaten Bangka', 'operator.bangka@example.com'],
+            'BELITUNG' => ['Operator Kabupaten Belitung', 'operator.belitung@example.com'],
+            'BANGKA_BARAT' => ['Operator Kabupaten Bangka Barat', 'operator.bangka.barat@example.com'],
+            'BANGKA_TENGAH' => ['Operator Kabupaten Bangka Tengah', 'operator.bangka.tengah@example.com'],
+            'BANGKA_SELATAN' => ['Operator Kabupaten Bangka Selatan', 'operator.bangka.selatan@example.com'],
+            'BELITUNG_TIMUR' => ['Operator Kabupaten Belitung Timur', 'operator.belitung.timur@example.com'],
+            'PANGKALPINANG' => ['Operator Kota Pangkalpinang', 'operator.pangkalpinang@example.com'],
+        ] as $regionCode => [$name, $email]) {
+            User::updateOrCreate(['email' => $email], [
+                'name' => $name,
+                'password' => Hash::make('password'),
+                'role' => 'operator',
+                'region_id' => $regions->firstWhere('code', $regionCode)->id,
+            ]);
+        }
 
-        ReportingYear::updateOrCreate(['year' => 2023], ['status' => 'closed']);
         $year = ReportingYear::updateOrCreate(['year' => 2024], ['status' => 'open']);
 
         $tables = [
@@ -91,6 +100,6 @@ class DatabaseSeeder extends Seeder
         }
 
         $this->command?->info('Demo administrator: admin@example.com / password');
-        $this->command?->info('Demo operator: operator.bangka@example.com / password');
+        $this->command?->info('Demo operators: operator.<region>@example.com / password');
     }
 }

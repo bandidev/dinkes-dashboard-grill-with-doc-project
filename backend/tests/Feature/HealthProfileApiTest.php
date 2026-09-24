@@ -232,6 +232,22 @@ class HealthProfileApiTest extends TestCase
         ]);
     }
 
+    public function test_table_one_can_be_mapped_without_creating_reporting_data(): void
+    {
+        [, , $table] = $this->scenario();
+        $table->update(['code' => 'T01']);
+
+        $this->artisan('profile:map-table-one', ['--year' => 2024, '--without-values' => true])
+            ->assertSuccessful();
+
+        $this->assertDatabaseCount('submissions', 0);
+        $this->assertDatabaseCount('indicator_values', 0);
+        $this->assertDatabaseCount('indicator_value_revisions', 0);
+        $this->assertDatabaseCount('submission_events', 0);
+        $this->assertDatabaseHas('reporting_tables', ['id' => $table->id, 'mapping_status' => 'ready']);
+        $this->assertDatabaseCount('indicators', 9);
+    }
+
     private function scenario(): array
     {
         $regionA = Region::create(['code' => 'A', 'name' => 'Kabupaten A']);

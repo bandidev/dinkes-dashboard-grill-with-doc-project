@@ -7,8 +7,13 @@ Laravel 13 JSON REST API for annual Kabupaten/Kota health profile reporting.
 ```bash
 composer install
 php artisan migrate:fresh --seed
+php artisan profile:import-catalog ../PROFIL-KES_2024_FINAL(hasilperbaikan).xlsx --year=2024 --replace
+php artisan profile:map-table-one --year=2024 --without-values
+php artisan profile:map-table-59 --year=2024
 php artisan serve
 ```
+
+Konfigurasi database mengikuti `backend/.env.example` dan menggunakan PostgreSQL. Setup di atas membuat data master Tahun Pelaporan 2024 tanpa Nilai Indikator atau Riwayat Revisi.
 
 Use `Accept: application/json`. Login at `POST /api/login`, then send the returned token as `Authorization: Bearer <token>`. Sanctum stores only the SHA-256 token hash in `personal_access_tokens`; the plaintext token is returned once at login.
 
@@ -17,9 +22,15 @@ Use `Accept: application/json`. Login at `POST /api/login`, then send the return
 | Role | Email | Password | Kabupaten/Kota |
 | --- | --- | --- | --- |
 | Administrator Sistem | `admin@example.com` | `password` | All |
-| Operator Kabupaten/Kota | `operator.bangka@example.com` | `password` | Kabupaten Bangka |
+| Operator Kabupaten Bangka | `operator.bangka@example.com` | `password` | Kabupaten Bangka |
+| Operator Kabupaten Belitung | `operator.belitung@example.com` | `password` | Kabupaten Belitung |
+| Operator Kabupaten Bangka Barat | `operator.bangka.barat@example.com` | `password` | Kabupaten Bangka Barat |
+| Operator Kabupaten Bangka Tengah | `operator.bangka.tengah@example.com` | `password` | Kabupaten Bangka Tengah |
+| Operator Kabupaten Bangka Selatan | `operator.bangka.selatan@example.com` | `password` | Kabupaten Bangka Selatan |
+| Operator Kabupaten Belitung Timur | `operator.belitung.timur@example.com` | `password` | Kabupaten Belitung Timur |
+| Operator Kota Pangkalpinang | `operator.pangkalpinang@example.com` | `password` | Kota Pangkalpinang |
 
-The seeder creates all 7 Kabupaten/Kota in Kepulauan Bangka Belitung, a closed 2023 reporting year, and an open 2024 reporting year with three representative reporting tables and numeric, text, and date indicators.
+Seeder membuat tujuh Kabupaten/Kota, delapan akun lokal, dan Tahun Pelaporan 2024 berstatus Terbuka. Importer dan perintah pemetaan melengkapi 86 Tabel Pelaporan dan Katalog Indikator tanpa data pelaporan operasional.
 
 ## Main Endpoints
 

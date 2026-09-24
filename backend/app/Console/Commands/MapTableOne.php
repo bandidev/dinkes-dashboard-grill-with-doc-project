@@ -14,7 +14,7 @@ use Illuminate\Support\Facades\DB;
 
 class MapTableOne extends Command
 {
-    protected $signature = 'profile:map-table-one {--year=2024}';
+    protected $signature = 'profile:map-table-one {--year=2024} {--without-values : Jangan masukkan Nilai Indikator dari workbook}';
 
     protected $description = 'Petakan Indikator resmi Tabel Pelaporan 1';
 
@@ -60,6 +60,10 @@ class MapTableOne extends Command
                 );
             }
             $table->update(['mapping_status' => 'ready']);
+
+            if ($this->option('without-values')) {
+                return;
+            }
 
             foreach ($table->submissions as $submission) {
                 $fromStatus = $submission->status;

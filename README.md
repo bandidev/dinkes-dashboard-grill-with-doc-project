@@ -11,14 +11,26 @@ Sistem Informasi Profil Kesehatan Kepulauan Bangka Belitung untuk pengisian, pem
 
 ## Menjalankan Lokal
 
-Backend menggunakan SQLite untuk pengembangan lokal agar dapat langsung dijalankan. Produksi ditujukan untuk PostgreSQL.
+Backend menggunakan PostgreSQL. Buat database dan role aplikasi lokal terlebih dahulu:
+
+```sql
+CREATE ROLE profil_kesehatan_app LOGIN PASSWORD '<password-lokal>';
+CREATE DATABASE "dinkes-dashboard-app-gpt" OWNER profil_kesehatan_app;
+```
+
+Salin `backend/.env.example` menjadi `backend/.env`, isi `DB_PASSWORD`, lalu jalankan:
 
 ```bash
 cd backend
 composer install
-php artisan migrate:fresh --seed
+php artisan migrate --seed
+php artisan profile:import-catalog ../PROFIL-KES_2024_FINAL(hasilperbaikan).xlsx --year=2024 --replace
+php artisan profile:map-table-one --year=2024 --without-values
+php artisan profile:map-table-59 --year=2024
 php artisan serve
 ```
+
+Perintah tersebut membuat data master Tahun Pelaporan 2024 tanpa membuat Nilai Indikator, submission, Riwayat Revisi, atau event status.
 
 Pada terminal lain:
 
@@ -36,6 +48,12 @@ Buka `http://127.0.0.1:5173`.
 | --- | --- | --- |
 | Administrator Sistem | `admin@example.com` | `password` |
 | Operator Kabupaten Bangka | `operator.bangka@example.com` | `password` |
+| Operator Kabupaten Belitung | `operator.belitung@example.com` | `password` |
+| Operator Kabupaten Bangka Barat | `operator.bangka.barat@example.com` | `password` |
+| Operator Kabupaten Bangka Tengah | `operator.bangka.tengah@example.com` | `password` |
+| Operator Kabupaten Bangka Selatan | `operator.bangka.selatan@example.com` | `password` |
+| Operator Kabupaten Belitung Timur | `operator.belitung.timur@example.com` | `password` |
+| Operator Kota Pangkalpinang | `operator.pangkalpinang@example.com` | `password` |
 
 ## Verifikasi
 

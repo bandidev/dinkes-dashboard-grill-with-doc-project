@@ -139,7 +139,7 @@ select:not(:disabled) {
 .worksheet-col-average { width: 130px; }
 .worksheet-col-density { width: 116px; }
 .worksheet-table tbody th { text-align: left; font-weight: 400; }
-.worksheet-column-numbers th { height: 22px; font-size: 10px; }
+.worksheet-column-numbers th { height: 22px; font-size: 10px; font-style: italic; }
 .worksheet-formula { background: #f1f1f1; font-weight: 700; }
 .worksheet-input-cell { padding: 0 !important; background: #fffbe6; }
 .worksheet-input-cell input { width: 100%; min-height: 44px; border: 0; border-radius: 0; background: transparent; padding: 7px 6px; color: #000; text-align: right; font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; outline: 0; }

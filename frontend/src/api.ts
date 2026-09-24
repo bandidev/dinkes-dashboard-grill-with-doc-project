@@ -1,0 +1,413 @@
+export type UserRole = 'administrator' | 'operator'
+
+export type SessionUser = {
+  id: string
+  name: string
+  email: string
+  role: UserRole
+  region?: string
+}
+
+export type ReportingStatus = 'not_started' | 'completed' | 'verified'
+
+export type ReportingTable = {
+  id: string
+  submissionId?: string
+  version: number
+  number: number
+  name: string
+  group: string
+  status: ReportingStatus
+  completion: number
+  updatedAt?: string
+  updatedBy?: string
+  mappingStatus: 'ready' | 'pending'
+}
+
+export type RegionProgress = {
+  id: string
+  name: string
+  verified: number
+  completed: number
+  notStarted: number
+  total: number
+}
+
+export type DashboardData = {
+  year: number
+  availableYears: number[]
+  reportingTables: ReportingTable[]
+  regions: RegionProgress[]
+  recentTables: ReportingTable[]
+}
+
+export type IndicatorRow = {
+  id: string
+  code: string
+  name: string
+  category: string
+  unit: string
+  value: string
+  kind: 'base' | 'derived'
+  dataType: 'numeric' | 'text' | 'date'
+  required: boolean
+  notApplicable: boolean
+  notApplicableReason: string
+  note?: string
+}
+
+export type ReportingTableDetail = ReportingTable & {
+  submissionId?: string
+  reportingTableId: string
+  description: string
+  year: number
+  region: string
+  rows: IndicatorRow[]
+  headerCandidates: string[]
+}
+
+export type WorksheetRow = {
+  regionId: string
+  regionName: string
+  submissionId?: string
+  status: ReportingStatus
+  version: number
+  editable: boolean
+  values: Record<string, string>
+}
+
+export type TableOneWorksheet = {
+  reportingTableId: string
+  year: number
+  indicators: Record<string, string>
+  rows: WorksheetRow[]
+}
+
+export type ManagedUser = SessionUser & { active: boolean }
+export type CatalogIndicator = { id: string; code: string; name: string; unit: string; tableName: string }
+
+type Region = { id: number; name: string }
+type ReportingYear = { id: number; year: number; status: 'open' | 'closed' }
+type Indicator = {
+  id: number
+  code: string
+  name: string
+  data_type: 'numeric' | 'text' | 'date'
+  unit: string | null
+  is_required: boolean
+  value_kind: 'base' | 'derived'
+  decimal_places: number
+  categories?: Record<string, string> | null
+}
+type ApiTable = {
+  id: number
+  code: string
+  name: string
+  description: string | null
+  position: number
+  reporting_year_id: number
+  indicators: Indicator[]
+  mapping_status: 'ready' | 'pending'
+  source_metadata?: { header_candidates?: string[] } | null
+}
+type ApiSubmissionListItem = {
+  id: number | null
+  region_id: number
+  status: ReportingStatus
+  version: number
+  values_count: number
+  updated_at: string | null
+  reporting_table: ApiTable
+}
+type ApiValue = {
+  indicator_id: number
+  numeric_value: string | null
+  text_value: string | null
+  date_value: string | null
+  not_applicable: boolean
+  not_applicable_reason: string | null
+}
+type ApiSubmission = {
+  id: number
+  status: ReportingStatus
+  version: number
+  updated_at: string
+  region: Region
+  reporting_table: ApiTable
+  values: ApiValue[]
+  calculated_values?: Record<string, number | null>
+}
+type ApiWorksheet = {
+  table: ApiTable & { reporting_year: ReportingYear }
+  rows: Array<{
+    region: Region
+    submission_id: number | null
+    status: ReportingStatus
+    version: number
+    editable: boolean
+    values: Record<string, string | number | null>
+    calculated_values: Record<string, number | null>
+  }>
+}
+
+const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
+
+export class ApiError extends Error {
+  status: number
+
+  constructor(message: string, status = 0) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
+  const response = await fetch(`${API_URL}${path}`, {
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+      ...(token && !token.startsWith('preview-') ? { Authorization: `Bearer ${token}` } : {}),
+      ...options.headers,
+    },
+  }).catch(() => {
+    throw new ApiError('Tidak dapat terhubung ke layanan API.')
+  })
+
+  if (response.status === 204) return undefined as T
+  const payload = await response.json().catch(() => null)
+  if (!response.ok) {
+    const validation = payload && typeof payload === 'object' && 'errors' in payload
+      ? Object.values((payload as { errors: Record<string, string[]> }).errors).flat()[0]
+      : null
+    const message = validation || (payload && typeof payload === 'object' && 'message' in payload
+      ? String(payload.message)
+      : `Permintaan gagal (${response.status}).`)
+    throw new ApiError(String(message), response.status)
+  }
+  return payload as T
+}
+
+function normalizeUser(user: { id: number; name: string; email: string; role: UserRole; region?: Region | null }): SessionUser {
+  return { ...user, id: String(user.id), region: user.region?.name }
+}
+
+async function reportingContext(token: string, requestedYear: number) {
+  const [years, regions] = await Promise.all([
+    request<ReportingYear[]>('/reporting-years', {}, token),
+    request<Region[]>('/regions', {}, token),
+  ])
+  const reportingYear = years.find((item) => item.year === requestedYear) || years[0]
+  if (!reportingYear) throw new ApiError('Tahun Pelaporan belum tersedia.', 404)
+  return { years, regions, reportingYear }
+}
+
+function tableFromSubmission(item: ApiSubmissionListItem): ReportingTable {
+  const indicatorCount = item.reporting_table.indicators.length
+  return {
+    id: String(item.reporting_table.id),
+    submissionId: item.id ? String(item.id) : undefined,
+    version: item.version,
+    number: item.reporting_table.position,
+    name: item.reporting_table.name,
+    group: item.reporting_table.code,
+    status: item.status,
+    completion: item.status === 'completed' || item.status === 'verified'
+      ? 100
+      : indicatorCount ? Math.round(item.values_count / indicatorCount * 100) : 0,
+    updatedAt: item.updated_at || undefined,
+    mappingStatus: item.reporting_table.mapping_status,
+  }
+}
+
+function valueText(value: ApiValue | undefined, type: Indicator['data_type']) {
+  if (!value || value.not_applicable) return ''
+  return String(value[`${type}_value` as keyof ApiValue] || '')
+}
+
+async function submissionList(token: string, yearId: number, regionId?: number) {
+  const query = new URLSearchParams({ reporting_year_id: String(yearId) })
+  if (regionId) query.set('region_id', String(regionId))
+  return request<ApiSubmissionListItem[]>(`/submissions?${query}`, {}, token)
+}
+
+export const api = {
+  async login(email: string, password: string) {
+    const payload = await request<{ token: string; user: { id: number; name: string; email: string; role: UserRole; region?: Region | null } }>('/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password, device_name: 'siprokkes-web' }),
+    })
+    return { token: payload.token, user: normalizeUser(payload.user) }
+  },
+  logout: (token: string) => request<void>('/logout', { method: 'POST' }, token),
+  async dashboard(token: string, year: number): Promise<DashboardData> {
+    const { years, reportingYear } = await reportingContext(token, year)
+    const payload = await request<{
+      reporting_year: ReportingYear
+      regions: Array<{ region: Region; total_tables: number; not_started: number; completed: number; verified: number }>
+      reporting_tables: Array<{ id: number; code: string; name: string; position: number; status: ReportingStatus; completion: number }>
+      recent_submissions: Array<{ id: number; name: string; position: number; status: ReportingStatus; region: string; updated_at: string }>
+    }>(`/dashboard?reporting_year_id=${reportingYear.id}`, {}, token)
+    return {
+      year: payload.reporting_year.year,
+      availableYears: years.map((item) => item.year),
+      reportingTables: payload.reporting_tables.map((table) => ({
+        id: String(table.id), version: 0, number: table.position, name: table.name, group: table.code,
+        status: table.status, completion: table.completion, mappingStatus: 'ready',
+      })),
+      regions: payload.regions.map((item) => ({
+        id: String(item.region.id), name: item.region.name, verified: item.verified,
+        completed: item.completed, notStarted: item.not_started, total: item.total_tables,
+      })),
+      recentTables: payload.recent_submissions.map((table) => ({
+        id: String(table.id), version: 0, number: table.position, name: table.name, group: table.region,
+        status: table.status, completion: table.status === 'not_started' ? 0 : 100,
+        updatedAt: table.updated_at, updatedBy: table.region, mappingStatus: 'ready',
+      })),
+    }
+  },
+  async reportingTables(token: string, year: number) {
+    const { reportingYear, regions } = await reportingContext(token, year)
+    return (await submissionList(token, reportingYear.id, regions[0]?.id)).map(tableFromSubmission)
+  },
+  async reportingTable(token: string, id: string, year: number): Promise<ReportingTableDetail> {
+    const { reportingYear, regions } = await reportingContext(token, year)
+    const item = (await submissionList(token, reportingYear.id, regions[0]?.id))
+      .find((candidate) => String(candidate.reporting_table.id) === id)
+    if (!item) throw new ApiError('Tabel Pelaporan tidak ditemukan.', 404)
+    const submission = item.id ? await request<ApiSubmission>(`/submissions/${item.id}`, {}, token) : null
+    const table = submission?.reporting_table || item.reporting_table
+    const values = new Map((submission?.values || []).map((value) => [value.indicator_id, value]))
+    return {
+      ...tableFromSubmission(item),
+      submissionId: submission ? String(submission.id) : undefined,
+      version: submission?.version ?? item.version,
+      reportingTableId: String(table.id),
+      description: table.description || 'Tabel Pelaporan Profil Kesehatan.',
+      year: reportingYear.year,
+      region: submission?.region.name || regions[0]?.name || 'Kabupaten/Kota',
+      rows: table.indicators.map((indicator) => {
+        const value = values.get(indicator.id)
+        const category = indicator.categories ? Object.values(indicator.categories).join(' • ') : (indicator.is_required ? 'Wajib' : 'Opsional')
+        return {
+          id: String(indicator.id), code: indicator.code, name: indicator.name,
+          category, unit: indicator.unit || '—',
+          value: indicator.value_kind === 'derived'
+            ? String(submission?.calculated_values?.[String(indicator.id)] ?? '')
+            : valueText(value, indicator.data_type),
+          kind: indicator.value_kind, dataType: indicator.data_type,
+          required: indicator.is_required, notApplicable: value?.not_applicable || false,
+          notApplicableReason: value?.not_applicable_reason || '',
+        }
+      }),
+      headerCandidates: table.source_metadata?.header_candidates || [],
+    }
+  },
+  async tableOneWorksheet(token: string, reportingTableId: string): Promise<TableOneWorksheet> {
+    const payload = await request<ApiWorksheet>(`/reporting-tables/${reportingTableId}/worksheet`, {}, token)
+    const indicators = Object.fromEntries(payload.table.indicators.map((indicator) => [indicator.code, String(indicator.id)]))
+    return {
+      reportingTableId,
+      year: payload.table.reporting_year.year,
+      indicators,
+      rows: payload.rows.map((row) => ({
+        regionId: String(row.region.id),
+        regionName: row.region.name,
+        submissionId: row.submission_id ? String(row.submission_id) : undefined,
+        status: row.status,
+        version: row.version,
+        editable: row.editable,
+        values: Object.fromEntries([
+          ...Object.entries(row.values),
+          ...Object.entries(row.calculated_values),
+        ].map(([id, value]) => [id, value === null ? '' : String(value)])),
+      })),
+    }
+  },
+  async saveWorksheetRow(token: string, worksheet: TableOneWorksheet, row: WorksheetRow) {
+    const baseCodes = ['LUAS_WILAYAH', 'JUMLAH_DESA', 'JUMLAH_KELURAHAN', 'JUMLAH_PENDUDUK', 'JUMLAH_RUMAH_TANGGA']
+    await request('/submissions/draft', {
+      method: 'POST',
+      body: JSON.stringify({
+        reporting_table_id: Number(worksheet.reportingTableId),
+        version: row.version,
+        values: baseCodes.map((code) => ({
+          indicator_id: Number(worksheet.indicators[code]),
+          value: row.values[worksheet.indicators[code]] || null,
+          not_applicable: false,
+          not_applicable_reason: null,
+        })),
+      }),
+    }, token)
+    return api.tableOneWorksheet(token, worksheet.reportingTableId)
+  },
+  async saveTable(token: string, detail: ReportingTableDetail) {
+    await request('/submissions/draft', {
+      method: 'POST',
+      body: JSON.stringify({
+        reporting_table_id: Number(detail.reportingTableId),
+        version: detail.version,
+        values: detail.rows.filter((row) => row.kind === 'base').map((row) => ({
+          indicator_id: Number(row.id), value: row.value || null,
+          not_applicable: row.notApplicable,
+          not_applicable_reason: row.notApplicable ? row.notApplicableReason : null,
+        })),
+      }),
+    }, token)
+    return api.reportingTable(token, detail.reportingTableId, detail.year)
+  },
+  async setTableStatus(token: string, detail: ReportingTableDetail, action: 'complete' | 'reopen' | 'verify' | 'unverify', reason?: string) {
+    if (!detail.submissionId) throw new ApiError('Simpan draft sebelum mengubah status.', 422)
+    await request(`/submissions/${detail.submissionId}/${action}`, {
+      method: 'POST', body: JSON.stringify({ version: detail.version, ...(reason ? { reason } : {}) }),
+    }, token)
+    return api.reportingTable(token, detail.reportingTableId, detail.year)
+  },
+  async users(token: string): Promise<ManagedUser[]> {
+    const users = await request<Array<{ id: number; name: string; email: string; role: UserRole; region?: Region | null }>>('/users', {}, token)
+    return users.map((user) => ({ ...normalizeUser(user), active: true }))
+  },
+  async catalog(token: string, year: number): Promise<CatalogIndicator[]> {
+    const { reportingYear } = await reportingContext(token, year)
+    const tables = await request<ApiTable[]>(`/reporting-years/${reportingYear.id}/tables`, {}, token)
+    return tables.flatMap((table) => table.indicators.map((indicator) => ({
+      id: String(indicator.id), code: indicator.code, name: indicator.name,
+      unit: indicator.unit || '—', tableName: `${table.code} — ${table.name}`,
+    })))
+  },
+  async mapIndicators(token: string, detail: ReportingTableDetail, selected: string[]) {
+    await request(`/reporting-tables/${detail.reportingTableId}/indicator-mapping`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        indicators: selected.map((name, index) => ({
+          code: `${detail.group}_${String(index + 1).padStart(2, '0')}`.replace(/[^A-Z0-9_]/gi, '_').toUpperCase(),
+          name,
+          data_type: 'numeric',
+          unit: null,
+          is_required: true,
+        })),
+      }),
+    }, token)
+    return api.reportingTable(token, detail.reportingTableId, detail.year)
+  },
+  async catalogImport(token: string, year: number) {
+    const { reportingYear } = await reportingContext(token, year)
+    try {
+      return await request<{
+        filename: string
+        imported_at: string
+        report: {
+          workbook_sheets: number
+          reporting_tables: number
+          mapping_ready: number
+          mapping_pending: number
+          warnings: string[]
+        }
+      }>(`/reporting-years/${reportingYear.id}/catalog-import`, {}, token)
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) return null
+      throw error
+    }
+  },
+}

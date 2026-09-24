@@ -1,0 +1,13 @@
+# Local source workbook and Microsoft Office lock file
+/PROFIL-KES_2024_FINAL(hasilperbaikan).xlsx
+~$*.xlsx
+
+# Local runtime data and generated test artifacts
+/backend/database/*.sqlite
+/frontend/test-results/
+/frontend/playwright-report/
+
+# Environment files
+.env
+.env.*
+!.env.example

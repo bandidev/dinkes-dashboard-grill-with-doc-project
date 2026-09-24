@@ -118,19 +118,52 @@ class HealthProfileApiTest extends TestCase
         Sanctum::actingAs($operator);
         $this->postJson('/api/submissions/'.$unverified['id'].'/reopen', ['version' => 4])
             ->assertUnprocessable();
-        $this->postJson('/api/submissions/'.$unverified['id'].'/reopen', [
+        $reopened = $this->postJson('/api/submissions/'.$unverified['id'].'/reopen', [
             'version' => 4,
             'reason' => 'Memperbaiki nilai berdasarkan dokumen terbaru.',
         ])->assertOk()
             ->assertJsonPath('status', 'not_started')
-            ->assertJsonPath('version', 5);
+            ->assertJsonPath('version', 5)
+            ->json();
+
+        $revised = $this->postJson('/api/submissions/draft', [
+            'reporting_table_id' => $table->id,
+            'version' => $reopened['version'],
+            'revision_reason' => 'Dokumen sumber telah diperbarui.',
+            'values' => [['indicator_id' => $indicator->id, 'value' => 14]],
+        ])->assertOk()
+            ->assertJsonPath('status', 'not_started')
+            ->assertJsonPath('version', 6)
+            ->json();
+
+        $completedAgain = $this->postJson('/api/submissions/'.$revised['id'].'/complete', [
+            'version' => $revised['version'],
+        ])->assertOk()
+            ->assertJsonPath('status', 'completed')
+            ->assertJsonPath('version', 7)
+            ->json();
+
+        Sanctum::actingAs($admin);
+        $this->postJson('/api/submissions/'.$completedAgain['id'].'/verify', [
+            'version' => $completedAgain['version'],
+        ])->assertOk()
+            ->assertJsonPath('status', 'verified')
+            ->assertJsonPath('version', 8);
 
         $this->assertDatabaseHas('submission_events', [
             'submission_id' => $draft['id'],
             'action' => 'unverify',
             'reason' => 'Perlu koreksi sumber data.',
         ]);
-        $this->assertDatabaseCount('indicator_value_revisions', 1);
+        $this->assertDatabaseHas('submission_events', [
+            'submission_id' => $draft['id'],
+            'action' => 'reopen',
+            'reason' => 'Memperbaiki nilai berdasarkan dokumen terbaru.',
+        ]);
+        $this->assertDatabaseCount('indicator_value_revisions', 2);
+        $this->assertDatabaseHas('indicator_value_revisions', [
+            'reason' => 'Dokumen sumber telah diperbarui.',
+        ]);
     }
 
     public function test_derived_indicators_cannot_be_written_directly(): void

@@ -1,4 +1,4 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 import { useAuth } from './auth'
 import { AppShell } from './components/app-shell'
 import { CatalogPage } from './pages/catalog'
@@ -13,19 +13,31 @@ function ProtectedApp() {
   return session ? <AppShell /> : <Navigate to="/login" replace />
 }
 
-export function App() {
+const router = createBrowserRouter([
+  { path: '/login', element: <LoginRoute /> },
+  {
+    element: <ProtectedApp />,
+    children: [
+      { path: '/dashboard', element: <DashboardPage /> },
+      { path: '/reporting-tables', element: <ReportingTablesPage /> },
+      { path: '/reporting-tables/:id', element: <ReportingDetailPage /> },
+      { path: '/catalog', element: <CatalogPage /> },
+      { path: '/users', element: <UsersPage /> },
+    ],
+  },
+  { path: '*', element: <FallbackRoute /> },
+])
+
+function LoginRoute() {
   const { session } = useAuth()
-  return (
-    <Routes>
-      <Route path="/login" element={session ? <Navigate to="/dashboard" replace /> : <LoginPage />} />
-      <Route element={<ProtectedApp />}>
-        <Route path="/dashboard" element={<DashboardPage />} />
-        <Route path="/reporting-tables" element={<ReportingTablesPage />} />
-        <Route path="/reporting-tables/:id" element={<ReportingDetailPage />} />
-        <Route path="/catalog" element={<CatalogPage />} />
-        <Route path="/users" element={<UsersPage />} />
-      </Route>
-      <Route path="*" element={<Navigate to={session ? '/dashboard' : '/login'} replace />} />
-    </Routes>
-  )
+  return session ? <Navigate to="/dashboard" replace /> : <LoginPage />
+}
+
+function FallbackRoute() {
+  const { session } = useAuth()
+  return <Navigate to={session ? '/dashboard' : '/login'} replace />
+}
+
+export function App() {
+  return <RouterProvider router={router} />
 }

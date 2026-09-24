@@ -53,7 +53,7 @@ export function TableOneWorksheetView({ token, reportingTableId, onSynced, onBus
   const editableRow = worksheet.rows.find((row) => row.editable)
   const updateValue = (row: WorksheetRow, code: string, value: string) => {
     const indicatorId = worksheet.indicators[code]
-    const next = { ...worksheet, rows: worksheet.rows.map((item) => item.regionId === row.regionId ? { ...item, values: { ...item.values, [indicatorId]: value } } : item) }
+    const next = { ...worksheet, rows: worksheet.rows.map((item) => item.regionId === row.regionId ? { ...item, values: previewCalculatedValues(worksheet, { ...item.values, [indicatorId]: value }) } : item) }
     worksheetRef.current = next
     setWorksheet(next)
     setSaveState('dirty')
@@ -149,7 +149,27 @@ function WorksheetTotal({ worksheet }: { worksheet: TableOneWorksheet }) {
 }
 
 function applyPendingValues(worksheet: TableOneWorksheet, pending: Map<string, string>) {
-  return { ...worksheet, rows: worksheet.rows.map((row) => row.editable ? { ...row, values: { ...row.values, ...Object.fromEntries([...pending].map(([code, value]) => [worksheet.indicators[code], value])) } } : row) }
+  return { ...worksheet, rows: worksheet.rows.map((row) => row.editable ? { ...row, values: previewCalculatedValues(worksheet, { ...row.values, ...Object.fromEntries([...pending].map(([code, value]) => [worksheet.indicators[code], value])) }) } : row) }
+}
+
+function previewCalculatedValues(worksheet: TableOneWorksheet, values: Record<string, string>) {
+  const number = (code: string) => {
+    const value = values[worksheet.indicators[code]]
+    const parsed = Number(value)
+    return value === '' || value === undefined || !Number.isFinite(parsed) ? null : parsed
+  }
+  const villages = number('JUMLAH_DESA')
+  const wards = number('JUMLAH_KELURAHAN')
+  const population = number('JUMLAH_PENDUDUK')
+  const households = number('JUMLAH_RUMAH_TANGGA')
+  const area = number('LUAS_WILAYAH')
+
+  return {
+    ...values,
+    [worksheet.indicators.JUMLAH_DESA_KELURAHAN]: villages === null || wards === null ? '' : String(villages + wards),
+    [worksheet.indicators.RATA_RATA_JIWA_RUMAH_TANGGA]: population === null || households === null || households === 0 ? '' : String(population / households),
+    [worksheet.indicators.KEPADATAN_PENDUDUK]: population === null || area === null || area === 0 ? '' : String(population / area),
+  }
 }
 
 function shortRegion(name: string) {

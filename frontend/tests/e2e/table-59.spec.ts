@@ -10,16 +10,23 @@ test('operator fills Table 59 age-sex matrix and receives totals and proportions
 
   await page.goto('/reporting-tables/59')
   const ageGroups = ['≤ 4 Tahun', '5 - 14 Tahun', '15 - 19 Tahun', '20 - 24 Tahun', '25 - 49 Tahun', '≥ 50 Tahun']
+  let total = 0
+  let firstGroupTotal = 0
   for (const [index, ageGroup] of ageGroups.entries()) {
-    const value = String(index + 1)
-    await page.getByRole('row').filter({ hasText: `${ageGroup} • Laki-laki` }).getByRole('textbox').fill(value)
-    await page.getByRole('row').filter({ hasText: `${ageGroup} • Perempuan` }).getByRole('textbox').fill(value)
+    const male = page.getByRole('row').filter({ hasText: `${ageGroup} • Laki-laki` }).getByRole('textbox')
+    const female = page.getByRole('row').filter({ hasText: `${ageGroup} • Perempuan` }).getByRole('textbox')
+    const maleValue = Number(await male.inputValue()) + 1
+    const femaleValue = Number(await female.inputValue()) + 1
+    await male.fill(String(maleValue))
+    await female.fill(String(femaleValue))
+    total += maleValue + femaleValue
+    if (index === 0) firstGroupTotal = maleValue + femaleValue
   }
   const saved = page.waitForResponse((response) => response.url().endsWith('/api/submissions/draft') && response.ok())
   await page.getByRole('button', { name: 'Simpan draft' }).click()
   await saved
 
   await expect(page.getByRole('status')).toContainText('Draft berhasil disimpan', { timeout: 15_000 })
-  await expect(page.getByRole('row').filter({ hasText: 'Semua Umur • L+P' })).toContainText('42')
-  await expect(page.getByRole('row').filter({ hasText: '≤ 4 Tahun • L+P' }).filter({ hasText: 'Proporsi Kelompok Umur' })).toContainText('4.76')
+  await expect(page.getByRole('row').filter({ hasText: 'Semua Umur • L+P' })).toContainText(String(total))
+  await expect(page.getByRole('row').filter({ hasText: '≤ 4 Tahun • L+P' }).filter({ hasText: 'Proporsi Kelompok Umur' })).toContainText(String(Math.round(firstGroupTotal / total * 10_000) / 100))
 })

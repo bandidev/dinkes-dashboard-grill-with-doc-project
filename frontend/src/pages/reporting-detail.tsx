@@ -1,6 +1,6 @@
 import { AlertTriangle, ArrowLeft, CheckCircle2, LockKeyhole, RotateCcw, Save } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { Link, useParams, useSearchParams } from 'react-router-dom'
+import { Link, useBlocker, useParams, useSearchParams } from 'react-router-dom'
 import { api, type IndicatorRow, type ReportingTableDetail, type TableOneWorksheet } from '../api'
 import { useAuth } from '../auth'
 import { ErrorState, LoadingState } from '../components/states'
@@ -24,10 +24,30 @@ export function ReportingDetailPage() {
   const [saving, setSaving] = useState(false)
   const [changingStatus, setChangingStatus] = useState(false)
   const [worksheetBusy, setWorksheetBusy] = useState(false)
+  const [formDirty, setFormDirty] = useState(false)
   const [selectedHeaders, setSelectedHeaders] = useState<string[]>([])
   const [inputMode, setInputMode] = useState<'form' | 'worksheet'>('form')
+  const hasUnsavedChanges = formDirty || worksheetBusy
+  const blocker = useBlocker(hasUnsavedChanges)
 
-  useEffect(() => { if (data) setDetail(data) }, [data])
+  useEffect(() => { if (data) { setDetail(data); setFormDirty(false) } }, [data])
+  useEffect(() => {
+    if (!hasUnsavedChanges) return
+    const beforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
+    return () => window.removeEventListener('beforeunload', beforeUnload)
+  }, [hasUnsavedChanges])
+  useEffect(() => {
+    if (blocker.state !== 'blocked') return
+    const method = formDirty ? 'Input Ringkas' : 'Tabel Lengkap'
+    if (window.confirm(`Perubahan ${method} belum tersimpan. Tinggalkan halaman dan abaikan perubahan?`)) {
+      setFormDirty(false)
+      blocker.proceed()
+    } else blocker.reset()
+  }, [blocker, formDirty])
 
   if (loading && !detail) return <LoadingState label="Memuat rincian Tabel Pelaporan…" />
   if (error || !detail) return <ErrorState message={error || 'Rincian tabel tidak tersedia.'} />
@@ -41,6 +61,7 @@ export function ReportingDetailPage() {
 
   function updateRow(next: IndicatorRow) {
     setDetail((current) => current ? { ...current, rows: current.rows.map((row) => row.id === next.id ? next : row) } : current)
+    setFormDirty(true)
     setNotice('')
   }
 
@@ -48,9 +69,13 @@ export function ReportingDetailPage() {
     if (!detail) return
     setSaving(true)
     try {
-      if (session!.token.startsWith('preview-')) setNotice('Draft tersimpan pada pratinjau sesi ini.')
+      if (session!.token.startsWith('preview-')) {
+        setFormDirty(false)
+        setNotice('Draft tersimpan pada pratinjau sesi ini.')
+      }
       else {
         setDetail(await api.saveTable(session!.token, detail))
+        setFormDirty(false)
         setNotice('Draft berhasil disimpan.')
       }
     } catch (reason) {
@@ -111,6 +136,13 @@ export function ReportingDetailPage() {
     }
   }
 
+  function showWorksheet() {
+    if (saving || worksheetBusy || inputMode === 'worksheet') return
+    if (formDirty && !window.confirm('Perubahan Input Ringkas belum disimpan. Beralih ke Tabel Lengkap dan abaikan perubahan?')) return
+    setFormDirty(false)
+    setInputMode('worksheet')
+  }
+
   function syncWorksheet(worksheet: TableOneWorksheet) {
     const row = worksheet.rows.find((item) => item.editable)
     if (!row) return
@@ -134,8 +166,8 @@ export function ReportingDetailPage() {
           <p className="mt-2 font-mono text-[11px] text-ink-faint">{detail.region} • Tahun Pelaporan {detail.year} • {detail.group}</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          {editable && !spreadsheetView ? <Button variant="outline" onClick={save} disabled={saving}><Save data-icon="inline-start" />{saving ? 'Menyimpan…' : 'Simpan draft'}</Button> : null}
-          {editable ? <Button onClick={() => changeStatus('complete')} disabled={missing > 0 || !detail.submissionId || worksheetBusy || changingStatus}><CheckCircle2 data-icon="inline-start" />{changingStatus ? 'Memproses…' : 'Selesai Input'}</Button> : null}
+          {editable && !spreadsheetView ? <Button variant="outline" onClick={save} disabled={saving || !formDirty}><Save data-icon="inline-start" />{saving ? 'Menyimpan…' : 'Simpan draft'}</Button> : null}
+          {editable ? <Button onClick={() => changeStatus('complete')} disabled={missing > 0 || !detail.submissionId || formDirty || worksheetBusy || changingStatus}><CheckCircle2 data-icon="inline-start" />{changingStatus ? 'Memproses…' : 'Selesai Input'}</Button> : null}
           {!isAdmin && detail.status === 'completed' ? <Button variant="outline" disabled={changingStatus} onClick={() => changeStatus('reopen')}><RotateCcw data-icon="inline-start" />Perbaiki Input</Button> : null}
           {isAdmin && detail.status === 'completed' ? <Button disabled={changingStatus} onClick={() => changeStatus('verify')}><CheckCircle2 data-icon="inline-start" />Verifikasi</Button> : null}
           {isAdmin && detail.status === 'verified' ? <Button variant="outline" disabled={changingStatus} onClick={() => changeStatus('unverify')}><RotateCcw data-icon="inline-start" />Batalkan Verifikasi</Button> : null}
@@ -143,10 +175,11 @@ export function ReportingDetailPage() {
       </div>
 
       {editable && !detail.submissionId && !spreadsheetView ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p>Simpan draft terlebih dahulu sebelum menyatakan Selesai Input.</p></div> : null}
-      {hasWorksheet ? <div className="mb-4 flex flex-col justify-between gap-3 rounded-[4px] border border-line bg-paper-raised p-3 sm:flex-row sm:items-center"><div><p className="text-xs font-bold">Pilih cara mengisi</p><p className="mt-0.5 text-[11px] text-ink-muted"><strong>Input Ringkas</strong> untuk fokus pada wilayah Anda. <strong>Tabel Lengkap</strong> untuk membandingkan seluruh Kabupaten/Kota.</p></div><div className="inline-flex self-start rounded-[3px] border border-line bg-paper-inset p-0.5" role="group" aria-label="Cara mengisi Tabel Pelaporan 1"><button type="button" disabled={saving || worksheetBusy} className={`min-h-10 rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'form' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'form'} onClick={showForm}>Input Ringkas <span className="block text-[9px] font-medium">Disarankan</span></button><button type="button" disabled={saving || worksheetBusy} className={`min-h-10 rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'worksheet' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'worksheet'} onClick={() => setInputMode('worksheet')}>Tabel Lengkap</button></div></div> : null}
+      {hasWorksheet ? <div className="mb-4 flex flex-col justify-between gap-3 rounded-[4px] border border-line bg-paper-raised p-3 sm:flex-row sm:items-center"><div><p className="text-xs font-bold">Pilih cara mengisi</p><p className="mt-0.5 text-[11px] text-ink-muted"><strong>Input Ringkas</strong> untuk fokus pada wilayah Anda. <strong>Tabel Lengkap</strong> untuk membandingkan seluruh Kabupaten/Kota.</p></div><div className="inline-flex self-start rounded-[3px] border border-line bg-paper-inset p-0.5" role="group" aria-label="Cara mengisi Tabel Pelaporan 1"><button type="button" disabled={saving || worksheetBusy} className={`min-h-10 rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'form' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'form'} onClick={showForm}>Input Ringkas <span className="block text-[9px] font-medium">Disarankan</span></button><button type="button" disabled={saving || worksheetBusy} className={`min-h-10 rounded-[2px] px-3 py-1.5 text-xs font-bold ${inputMode === 'worksheet' ? 'bg-paper-raised text-archive shadow-sm' : 'text-ink-muted'}`} aria-pressed={inputMode === 'worksheet'} onClick={showWorksheet}>Tabel Lengkap</button></div></div> : null}
       {detail.mappingStatus === 'pending' ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>Indikator tabel ini masih perlu dipetakan.</strong> Administrator harus memvalidasi header workbook sebelum Operator dapat menginput data.</p></div> : null}
       {isAdmin && detail.mappingStatus === 'pending' ? <Panel className="mb-4 overflow-hidden"><div className="border-b border-line p-4"><p className="text-sm font-bold">Kandidat Header Workbook</p><p className="mt-1 text-xs text-ink-muted">Pilih hanya kolom yang benar-benar merupakan Nilai Dasar. Total, jumlah, rasio, dan persentase turunan jangan dipilih.</p></div><div className="grid gap-px bg-line-soft sm:grid-cols-2 xl:grid-cols-3">{detail.headerCandidates.map((header) => <label key={header} className="flex items-start gap-2 bg-paper-raised p-3 text-xs"><input type="checkbox" checked={selectedHeaders.includes(header)} onChange={(event) => setSelectedHeaders((current) => event.target.checked ? [...current, header] : current.filter((item) => item !== header))} /><span>{header}</span></label>)}</div><div className="border-t border-line p-4"><Button onClick={mapIndicators} disabled={!selectedHeaders.length || saving}>{saving ? 'Memetakan…' : `Tetapkan ${selectedHeaders.length} Indikator`}</Button></div></Panel> : null}
       {missing > 0 && editable ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>{missing} Nilai Indikator wajib belum diisi.</strong> Selesaikan nilai kosong atau tandai Tidak Berlaku dengan alasan.</p></div> : null}
+      {formDirty ? <div className="mb-4 flex items-start gap-3 rounded-[4px] border border-pending/60 bg-pending-soft px-4 py-3 text-xs text-[#5f4b19]" role="status"><AlertTriangle className="mt-0.5 size-4 shrink-0" /><p><strong>Perubahan belum disimpan.</strong> Pilih Simpan draft sebelum berpindah atau menyatakan Selesai Input.</p></div> : null}
       {notice ? <p className="mb-4 rounded-[4px] border border-line bg-paper-raised px-4 py-3 text-xs" role="status">{notice}</p> : null}
 
       {spreadsheetView ? <TableOneWorksheetView token={session!.token} reportingTableId={detail.reportingTableId} onSynced={syncWorksheet} onBusyChange={setWorksheetBusy} /> : <Panel className="overflow-hidden">

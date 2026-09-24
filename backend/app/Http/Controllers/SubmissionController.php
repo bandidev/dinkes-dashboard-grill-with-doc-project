@@ -116,7 +116,7 @@ class SubmissionController extends Controller
         return $submission;
     }
 
-    public function saveDraft(Request $request)
+    public function saveDraft(Request $request, IndicatorCalculator $calculator)
     {
         $data = $request->validate([
             'reporting_table_id' => ['required', 'exists:reporting_tables,id'],
@@ -182,7 +182,13 @@ class SubmissionController extends Controller
             return $submission->refresh();
         });
 
-        return response()->json($submission->load('values.indicator'));
+        $submission->load('reportingTable.indicators', 'values.indicator');
+        $submission->setAttribute(
+            'calculated_values',
+            $calculator->calculate($submission->reportingTable->indicators, $submission->values),
+        );
+
+        return response()->json($submission);
     }
 
     public function complete(Request $request, Submission $submission)

@@ -353,12 +353,16 @@ export const api = {
             String(saved.indicator_id),
             valueText(saved, saved.indicator.data_type),
           ])),
+          ...Object.fromEntries(Object.entries(submission.calculated_values || {}).map(([id, calculated]) => [
+            id,
+            calculated === null ? '' : String(calculated),
+          ])),
         },
       } : item),
     }
   },
   async saveTable(token: string, detail: ReportingTableDetail) {
-    await request('/submissions/draft', {
+    const submission = await request<ApiSubmission>('/submissions/draft', {
       method: 'POST',
       body: JSON.stringify({
         reporting_table_id: Number(detail.reportingTableId),
@@ -370,7 +374,23 @@ export const api = {
         })),
       }),
     }, token)
-    return api.reportingTable(token, detail.reportingTableId, detail.year)
+    const values = new Map(submission.values.map((value) => [String(value.indicator_id), value]))
+    return {
+      ...detail,
+      submissionId: String(submission.id),
+      status: submission.status,
+      version: submission.version,
+      rows: detail.rows.map((row) => {
+        if (row.kind === 'derived') return { ...row, value: String(submission.calculated_values?.[row.id] ?? '') }
+        const value = values.get(row.id)
+        return value ? {
+          ...row,
+          value: valueText(value, value.indicator.data_type),
+          notApplicable: value.not_applicable,
+          notApplicableReason: value.not_applicable_reason || '',
+        } : row
+      }),
+    }
   },
   async setTableStatus(token: string, detail: ReportingTableDetail, action: 'complete' | 'reopen' | 'verify' | 'unverify', reason?: string) {
     if (!detail.submissionId) throw new ApiError('Simpan draft sebelum mengubah status.', 422)

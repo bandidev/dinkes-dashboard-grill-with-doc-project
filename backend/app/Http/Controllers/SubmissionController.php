@@ -131,6 +131,7 @@ class SubmissionController extends Controller
         $table = ReportingTable::with('reportingYear', 'indicators')->findOrFail($data['reporting_table_id']);
         abort_unless($table->mapping_status === 'ready', 409, 'Indikator Tabel Pelaporan masih perlu dipetakan.');
         abort_unless($table->reportingYear->status === 'open', 409, 'The reporting year is closed.');
+        $data['values'] = $this->normalizeNumericValues($data['values'], $table);
         $this->validateValues($data['values'], $table);
 
         $submission = DB::transaction(function () use ($request, $data, $table) {
@@ -294,6 +295,26 @@ class SubmissionController extends Controller
                 'not_applicable_reason' => "values.$index.not_applicable_reason",
             ])->validate();
         }
+    }
+
+    private function normalizeNumericValues(array $values, ReportingTable $table): array
+    {
+        $indicators = $table->indicators->keyBy('id');
+
+        return array_map(function (array $item) use ($indicators) {
+            $indicator = $indicators->get($item['indicator_id']);
+            if ($indicator?->data_type !== 'numeric' || ! is_string($item['value'] ?? null)) {
+                return $item;
+            }
+
+            $value = trim($item['value']);
+            if (str_contains($value, ',')) {
+                $value = str_replace(['.', ','], ['', '.'], $value);
+            }
+            $item['value'] = $value;
+
+            return $item;
+        }, $values);
     }
 
     private function valueAttributes(array $item, Indicator $indicator): array

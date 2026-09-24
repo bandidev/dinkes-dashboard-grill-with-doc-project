@@ -242,9 +242,18 @@ function tableFromSubmission(item: ApiSubmissionListItem): ReportingTable {
   }
 }
 
-function valueText(value: ApiValue | undefined, type: Indicator['data_type']) {
+function valueText(value: ApiValue | undefined, indicator: Indicator) {
   if (!value || value.not_applicable) return ''
-  return String(value[`${type}_value` as keyof ApiValue] || '')
+  if (indicator.data_type === 'numeric') return value.numeric_value === null ? '' : numericText(value.numeric_value, indicator.decimal_places)
+  if (indicator.data_type === 'date') return value.date_value || ''
+  return value.text_value || ''
+}
+
+function numericText(value: string | number, decimalPlaces: number) {
+  return new Intl.NumberFormat('id-ID', {
+    useGrouping: false,
+    maximumFractionDigits: decimalPlaces,
+  }).format(Number(value))
 }
 
 async function submissionList(token: string, yearId: number, regionId?: number) {
@@ -320,7 +329,7 @@ export const api = {
           category, unit: indicator.unit || '—',
           value: indicator.value_kind === 'derived'
             ? String(submission?.calculated_values?.[String(indicator.id)] ?? '')
-            : valueText(value, indicator.data_type),
+            : valueText(value, indicator),
           kind: indicator.value_kind, dataType: indicator.data_type,
           required: indicator.is_required, notApplicable: value?.not_applicable || false,
           notApplicableReason: value?.not_applicable_reason || '',
@@ -332,6 +341,7 @@ export const api = {
   async tableOneWorksheet(token: string, reportingTableId: string): Promise<TableOneWorksheet> {
     const payload = await request<ApiWorksheet>(`/reporting-tables/${reportingTableId}/worksheet`, {}, token)
     const indicators = Object.fromEntries(payload.table.indicators.map((indicator) => [indicator.code, String(indicator.id)]))
+    const indicatorsById = new Map(payload.table.indicators.map((indicator) => [String(indicator.id), indicator]))
     return {
       reportingTableId,
       year: payload.table.reporting_year.year,
@@ -346,7 +356,10 @@ export const api = {
         values: Object.fromEntries([
           ...Object.entries(row.values),
           ...Object.entries(row.calculated_values),
-        ].map(([id, value]) => [id, value === null ? '' : String(value)])),
+        ].map(([id, value]) => {
+          const indicator = indicatorsById.get(id)
+          return [id, value === null ? '' : indicator?.data_type === 'numeric' ? numericText(value, indicator.decimal_places) : String(value)]
+        })),
       })),
     }
   },
@@ -375,7 +388,7 @@ export const api = {
           ...item.values,
           ...Object.fromEntries(submission.values.map((saved) => [
             String(saved.indicator_id),
-            valueText(saved, saved.indicator.data_type),
+            valueText(saved, saved.indicator),
           ])),
           ...Object.fromEntries(Object.entries(submission.calculated_values || {}).map(([id, calculated]) => [
             id,
@@ -409,7 +422,7 @@ export const api = {
         const value = values.get(row.id)
         return value ? {
           ...row,
-          value: valueText(value, value.indicator.data_type),
+          value: valueText(value, value.indicator),
           notApplicable: value.not_applicable,
           notApplicableReason: value.not_applicable_reason || '',
         } : row

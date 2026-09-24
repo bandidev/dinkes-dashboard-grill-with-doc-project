@@ -137,7 +137,7 @@ function WorksheetCell({ row, code, label, indicatorId, onChange, onSave }: { ro
 
 function WorksheetTotal({ worksheet }: { worksheet: TableOneWorksheet }) {
   const totals = Object.fromEntries(columns.map(([code]) => {
-    const values = worksheet.rows.map((row) => Number(row.values[worksheet.indicators[code]])).filter(Number.isFinite)
+    const values = worksheet.rows.map((row) => parseNumber(row.values[worksheet.indicators[code]])).filter(Number.isFinite)
     return [code, baseCodes.has(code) || code === 'JUMLAH_DESA_KELURAHAN' ? values.reduce((sum, value) => sum + value, 0) : '']
   }))
   const population = Number(totals.JUMLAH_PENDUDUK)
@@ -155,7 +155,7 @@ function applyPendingValues(worksheet: TableOneWorksheet, pending: Map<string, s
 function previewCalculatedValues(worksheet: TableOneWorksheet, values: Record<string, string>) {
   const number = (code: string) => {
     const value = values[worksheet.indicators[code]]
-    const parsed = Number(value)
+    const parsed = parseNumber(value)
     return value === '' || value === undefined || !Number.isFinite(parsed) ? null : parsed
   }
   const villages = number('JUMLAH_DESA')
@@ -178,8 +178,13 @@ function shortRegion(name: string) {
 
 function formatNumber(value: string, code: string) {
   if (value === '' || value === 'undefined') return ''
-  const number = Number(value)
+  const number = parseNumber(value)
   if (!Number.isFinite(number)) return value
   const decimals = code === 'LUAS_WILAYAH' ? 1 : code === 'RATA_RATA_JIWA_RUMAH_TANGGA' || code === 'KEPADATAN_PENDUDUK' ? 1 : 0
-  return new Intl.NumberFormat('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(number)
+  return new Intl.NumberFormat('id-ID', { minimumFractionDigits: decimals, maximumFractionDigits: decimals }).format(number)
+}
+
+function parseNumber(value: string | undefined) {
+  if (!value?.includes(',')) return Number(value)
+  return Number(value.replace(/\./g, '').replace(',', '.'))
 }

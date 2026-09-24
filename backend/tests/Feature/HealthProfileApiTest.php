@@ -232,6 +232,24 @@ class HealthProfileApiTest extends TestCase
         ]);
     }
 
+    public function test_numeric_indicator_accepts_indonesian_decimal_separator(): void
+    {
+        [$operator, , $table, $indicator] = $this->scenario();
+        Sanctum::actingAs($operator);
+
+        $this->postJson('/api/submissions/draft', [
+            'reporting_table_id' => $table->id,
+            'version' => 0,
+            'values' => [['indicator_id' => $indicator->id, 'value' => '2950,9']],
+        ])->assertOk()
+            ->assertJsonPath('values.0.numeric_value', 2950.9);
+
+        $this->assertDatabaseHas('indicator_values', [
+            'indicator_id' => $indicator->id,
+            'numeric_value' => 2950.9,
+        ]);
+    }
+
     public function test_table_one_can_be_mapped_without_creating_reporting_data(): void
     {
         [, , $table] = $this->scenario();

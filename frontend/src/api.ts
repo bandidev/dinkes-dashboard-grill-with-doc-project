@@ -152,6 +152,8 @@ type ApiWorksheet = {
 }
 
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
+const pendingGetRequests = new Map<string, Promise<unknown>>()
+const cachedGetResponses = new Map<string, unknown>()
 
 export class ApiError extends Error {
   status: number
@@ -164,30 +166,48 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
-  const response = await fetch(`${API_URL}${path}`, {
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(token && !token.startsWith('preview-') ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  }).catch(() => {
-    throw new ApiError('Tidak dapat terhubung ke layanan API.')
-  })
+  const cacheKey = !options.method || options.method === 'GET' ? `${token || ''}:${path}` : null
+  if (cacheKey && cachedGetResponses.has(cacheKey)) return cachedGetResponses.get(cacheKey) as T
+  const pending = cacheKey ? pendingGetRequests.get(cacheKey) : null
+  if (pending) return pending as Promise<T>
 
-  if (response.status === 204) return undefined as T
-  const payload = await response.json().catch(() => null)
-  if (!response.ok) {
-    const validation = payload && typeof payload === 'object' && 'errors' in payload
-      ? Object.values((payload as { errors: Record<string, string[]> }).errors).flat()[0]
-      : null
-    const message = validation || (payload && typeof payload === 'object' && 'message' in payload
-      ? String(payload.message)
-      : `Permintaan gagal (${response.status}).`)
-    throw new ApiError(String(message), response.status)
+  const execute = async () => {
+    const response = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        Accept: 'application/json',
+        ...(options.body ? { 'Content-Type': 'application/json' } : {}),
+        ...(token && !token.startsWith('preview-') ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    }).catch(() => {
+      throw new ApiError('Tidak dapat terhubung ke layanan API.')
+    })
+
+    if (response.status === 204) return undefined as T
+    const payload = await response.json().catch(() => null)
+    if (!response.ok) {
+      const validation = payload && typeof payload === 'object' && 'errors' in payload
+        ? Object.values((payload as { errors: Record<string, string[]> }).errors).flat()[0]
+        : null
+      const message = validation || (payload && typeof payload === 'object' && 'message' in payload
+        ? String(payload.message)
+        : `Permintaan gagal (${response.status}).`)
+      throw new ApiError(String(message), response.status)
+    }
+    return payload as T
   }
-  return payload as T
+
+  const promise = execute()
+  if (cacheKey) pendingGetRequests.set(cacheKey, promise)
+
+  try {
+    const payload = await promise
+    if (cacheKey && (path === '/reporting-years' || path === '/regions')) cachedGetResponses.set(cacheKey, payload)
+    return payload
+  } finally {
+    if (cacheKey) pendingGetRequests.delete(cacheKey)
+  }
 }
 
 function normalizeUser(user: { id: number; name: string; email: string; role: UserRole; region?: Region | null }): SessionUser {
@@ -243,7 +263,9 @@ export const api = {
   },
   logout: (token: string) => request<void>('/logout', { method: 'POST' }, token),
   async dashboard(token: string, year: number): Promise<DashboardData> {
-    const { years, reportingYear } = await reportingContext(token, year)
+    const years = await request<ReportingYear[]>('/reporting-years', {}, token)
+    const reportingYear = years.find((item) => item.year === year) || years[0]
+    if (!reportingYear) throw new ApiError('Tahun Pelaporan belum tersedia.', 404)
     const payload = await request<{
       reporting_year: ReportingYear
       regions: Array<{ region: Region; total_tables: number; not_started: number; completed: number; verified: number }>
@@ -269,8 +291,10 @@ export const api = {
     }
   },
   async reportingTables(token: string, year: number) {
-    const { reportingYear, regions } = await reportingContext(token, year)
-    return (await submissionList(token, reportingYear.id, regions[0]?.id)).map(tableFromSubmission)
+    const years = await request<ReportingYear[]>('/reporting-years', {}, token)
+    const reportingYear = years.find((item) => item.year === year) || years[0]
+    if (!reportingYear) throw new ApiError('Tahun Pelaporan belum tersedia.', 404)
+    return (await submissionList(token, reportingYear.id)).map(tableFromSubmission)
   },
   async reportingTable(token: string, id: string, year: number): Promise<ReportingTableDetail> {
     const { reportingYear, regions } = await reportingContext(token, year)

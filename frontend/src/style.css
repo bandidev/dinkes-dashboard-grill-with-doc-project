@@ -143,7 +143,7 @@ select:not(:disabled) {
 .worksheet-formula { background: #f1f1f1; font-weight: 700; }
 .worksheet-input-cell { padding: 0 !important; background: #fffbe6; }
 .worksheet-input-cell input { width: 100%; min-height: 44px; border: 0; border-radius: 0; background: transparent; padding: 7px 6px; color: #000; text-align: right; font-family: Arial, sans-serif; font-variant-numeric: tabular-nums; outline: 0; }
-.worksheet-input-cell input:focus { background: #fff; box-shadow: inset 0 0 0 2px #217346; }
+.worksheet-input-cell input:focus { background: #fff; box-shadow: inset 0 0 0 1px var(--color-archive); }
 .worksheet-active-row > th, .worksheet-active-row > td:first-child { background: #e2f0d9; font-weight: 700; }
 .worksheet-total th, .worksheet-total td { height: 40px; font-weight: 700; }
 .worksheet-source { margin: 18px 0 0; font-size: 12px; line-height: 1.5; }

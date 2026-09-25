@@ -23,7 +23,7 @@ export function ReasonDialog({ open, title, description, confirmLabel, busy, onC
         </div>
         <div className="p-5">
           <label className="text-xs font-bold" htmlFor="status-reason">Alasan perubahan status</label>
-          <textarea id="status-reason" autoFocus maxLength={1000} rows={4} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Contoh: Data sumber perlu diperbaiki berdasarkan dokumen terbaru." className="mt-2 w-full resize-y rounded-[4px] border border-line bg-paper-inset px-3 py-2.5 text-sm leading-6 text-ink outline-offset-2 placeholder:text-ink-faint focus:border-correction focus:outline focus:outline-2 focus:outline-correction/25" />
+          <textarea id="status-reason" autoFocus maxLength={1000} rows={4} value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Contoh: Data sumber perlu diperbaiki berdasarkan dokumen terbaru." className="mt-2 w-full resize-y rounded-[4px] border border-line bg-paper-inset px-3 py-2.5 text-sm leading-6 text-ink outline-offset-1 placeholder:text-ink-faint focus:border-correction focus:outline focus:outline-1 focus:outline-correction/45" />
           <div className="mt-1.5 flex items-center justify-between text-[10px] text-ink-faint"><span>Wajib diisi agar Riwayat Revisi mudah ditelusuri.</span><span className="font-mono tabular">{reason.length}/1000</span></div>
         </div>
         <div className="flex justify-end gap-2 border-t border-line-soft bg-paper-inset/60 px-5 py-4"><Button variant="ghost" onClick={onClose} disabled={busy}>Batal</Button><Button variant="danger" type="submit" disabled={!reason.trim() || busy}>{busy ? 'Memproses…' : confirmLabel}</Button></div>

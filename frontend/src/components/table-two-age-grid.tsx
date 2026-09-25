@@ -23,11 +23,7 @@ export function TableTwoAgeGrid({ rows, editable, dirtyRows, onChange }: {
 
     if (!editable) return <span className="font-mono tabular text-ink">{row.notApplicable ? 'Tidak Berlaku' : row.value ? formatNumber(row.value, 0) : '—'}</span>
 
-    return <div className="flex min-w-32 flex-col gap-1.5">
-      <Input aria-label={`${label}, ${age === '75+' ? 'usia 75 tahun ke atas' : `usia ${age} tahun`}`} type="text" inputMode="numeric" value={row.value} disabled={row.notApplicable} onChange={(event) => onChange({ ...row, value: event.target.value })} className={`font-mono tabular ${dirtyRows.includes(row.id) ? 'border-pending bg-pending-soft/35' : ''}`} />
-      <label className="flex items-center gap-1.5 text-[10px] text-ink-muted"><input type="checkbox" checked={row.notApplicable} onChange={(event) => onChange({ ...row, notApplicable: event.target.checked, value: event.target.checked ? '' : row.value })} />Tidak Berlaku</label>
-      {row.notApplicable ? <Input aria-label={`Alasan ${label} kelompok umur ${age} tidak berlaku`} placeholder="Alasan wajib" value={row.notApplicableReason} onChange={(event) => onChange({ ...row, notApplicableReason: event.target.value })} /> : null}
-    </div>
+    return <Input aria-label={`${label}, ${age === '75+' ? 'usia 75 tahun ke atas' : `usia ${age} tahun`}`} type="text" inputMode="numeric" value={row.value} onChange={(event) => onChange({ ...row, value: event.target.value, notApplicable: false, notApplicableReason: '' })} className={`min-w-32 font-mono tabular ${dirtyRows.includes(row.id) ? 'border-pending bg-pending-soft/35' : ''}`} />
   }
 
   return <div><p className="border-b border-line-soft px-4 py-2 text-[11px] text-ink-muted">Jumlah penduduk menurut kelompok umur. Total dan rasio dihitung dari Laki-laki dan Perempuan setelah Simpan draft.</p><div className="overflow-x-auto scrollbar-thin">

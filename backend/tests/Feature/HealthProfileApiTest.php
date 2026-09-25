@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\Indicator;
+use App\Models\IndicatorValue;
+use App\Models\IndicatorValueRevision;
 use App\Models\Region;
 use App\Models\ReportingTable;
 use App\Models\ReportingYear;
@@ -235,6 +237,7 @@ class HealthProfileApiTest extends TestCase
     public function test_partial_draft_save_preserves_other_indicator_not_applicable_state(): void
     {
         [$operator, , $table, $indicator] = $this->scenario();
+        $table->update(['code' => 'T03']);
         $other = Indicator::create([
             'reporting_table_id' => $table->id,
             'code' => 'I02',
@@ -264,6 +267,86 @@ class HealthProfileApiTest extends TestCase
             'not_applicable' => true,
             'not_applicable_reason' => 'Tidak tersedia di wilayah ini.',
         ]);
+    }
+
+    public function test_tables_one_and_two_require_explicit_zero_and_reject_new_not_applicable_values(): void
+    {
+        foreach (['T01', 'T02'] as $code) {
+            [$operator, , $table, $indicator] = $this->scenario($code === 'T02' ? '2' : '');
+            $table->update(['code' => $code]);
+            Sanctum::actingAs($operator);
+
+            $this->postJson('/api/submissions/draft', [
+                'reporting_table_id' => $table->id, 'version' => 0,
+                'values' => [['indicator_id' => $indicator->id, 'not_applicable' => true, 'not_applicable_reason' => 'Tidak ada']],
+            ])->assertUnprocessable();
+
+            $draft = $this->postJson('/api/submissions/draft', [
+                'reporting_table_id' => $table->id, 'version' => 0,
+                'values' => [['indicator_id' => $indicator->id, 'value' => '']],
+            ])->assertOk()->json();
+            $this->assertNull($draft['values'][0]['numeric_value']);
+            $this->getJson('/api/submissions?reporting_year_id='.$table->reporting_year_id)
+                ->assertOk()->assertJsonPath('0.values_count', 0);
+            $this->postJson('/api/submissions/'.$draft['id'].'/complete', ['version' => $draft['version']])->assertUnprocessable();
+
+            $saved = $this->postJson('/api/submissions/draft', [
+                'reporting_table_id' => $table->id, 'version' => $draft['version'],
+                'values' => [['indicator_id' => $indicator->id, 'value' => 0]],
+            ])->assertOk()->assertJsonPath('values.0.numeric_value', 0)->json();
+            $this->getJson('/api/submissions?reporting_year_id='.$table->reporting_year_id)
+                ->assertOk()->assertJsonPath('0.values_count', 1);
+            $this->postJson('/api/submissions/'.$saved['id'].'/complete', ['version' => $saved['version']])->assertOk();
+        }
+    }
+
+    public function test_partial_draft_save_converts_historical_not_applicable_to_zero_without_filling_missing_values(): void
+    {
+        foreach (['T01', 'T02'] as $code) {
+            [$operator, , $table, $indicator] = $this->scenario($code === 'T02' ? '2' : '');
+            $table->update(['code' => $code]);
+            $legacy = Indicator::create(['reporting_table_id' => $table->id, 'code' => 'LEGACY', 'name' => 'Data lama', 'data_type' => 'numeric']);
+            $missing = Indicator::create(['reporting_table_id' => $table->id, 'code' => 'MISSING', 'name' => 'Belum diisi', 'data_type' => 'numeric']);
+            $submission = Submission::create(['region_id' => $operator->region_id, 'reporting_year_id' => $table->reporting_year_id, 'reporting_table_id' => $table->id, 'status' => 'not_started', 'version' => 0]);
+            $old = IndicatorValue::create(['submission_id' => $submission->id, 'indicator_id' => $legacy->id, 'not_applicable' => true, 'not_applicable_reason' => 'Data historis']);
+            Sanctum::actingAs($operator);
+
+            $this->postJson('/api/submissions/'.$submission->id.'/complete', ['version' => 0])->assertUnprocessable();
+            $draft = $this->postJson('/api/submissions/draft', [
+                'reporting_table_id' => $table->id, 'version' => 0,
+                'values' => [['indicator_id' => $indicator->id, 'value' => 3]],
+            ])->assertOk()->json();
+
+            $this->assertDatabaseHas('indicator_values', ['id' => $old->id, 'numeric_value' => 0, 'not_applicable' => false, 'not_applicable_reason' => null]);
+            $this->assertDatabaseMissing('indicator_values', ['submission_id' => $submission->id, 'indicator_id' => $missing->id]);
+            $this->assertSame(1, IndicatorValueRevision::where('indicator_value_id', $old->id)->count());
+            $this->assertSame('Data historis', IndicatorValueRevision::where('indicator_value_id', $old->id)->firstOrFail()->old_value['not_applicable_reason']);
+            $this->getJson('/api/submissions?reporting_year_id='.$table->reporting_year_id)
+                ->assertOk()->assertJsonPath('0.values_count', 2);
+            $this->postJson('/api/submissions/'.$submission->id.'/complete', ['version' => $draft['version']])->assertUnprocessable();
+        }
+    }
+
+    public function test_explicit_replacement_of_historical_not_applicable_uses_entered_value_and_locked_submissions_remain_untouched(): void
+    {
+        [$operator, , $table, $indicator] = $this->scenario();
+        $submission = Submission::create(['region_id' => $operator->region_id, 'reporting_year_id' => $table->reporting_year_id, 'reporting_table_id' => $table->id, 'status' => 'not_started', 'version' => 0]);
+        $old = IndicatorValue::create(['submission_id' => $submission->id, 'indicator_id' => $indicator->id, 'not_applicable' => true, 'not_applicable_reason' => 'Data historis']);
+        Sanctum::actingAs($operator);
+
+        $this->postJson('/api/submissions/draft', [
+            'reporting_table_id' => $table->id, 'version' => 0,
+            'values' => [['indicator_id' => $indicator->id, 'value' => 9]],
+        ])->assertOk()->assertJsonPath('values.0.numeric_value', 9);
+        $this->assertDatabaseHas('indicator_values', ['id' => $old->id, 'numeric_value' => 9, 'not_applicable' => false]);
+        $this->assertSame(1, IndicatorValueRevision::where('indicator_value_id', $old->id)->count());
+
+        $submission->update(['status' => 'verified', 'version' => 2]);
+        $this->postJson('/api/submissions/draft', [
+            'reporting_table_id' => $table->id, 'version' => 2,
+            'values' => [['indicator_id' => $indicator->id, 'value' => 0]],
+        ])->assertStatus(409);
+        $this->assertDatabaseHas('indicator_values', ['id' => $old->id, 'numeric_value' => 9]);
     }
 
     public function test_numeric_indicator_accepts_indonesian_decimal_separator(): void
@@ -300,11 +383,11 @@ class HealthProfileApiTest extends TestCase
         $this->assertDatabaseCount('indicators', 9);
     }
 
-    private function scenario(): array
+    private function scenario(string $suffix = ''): array
     {
-        $regionA = Region::create(['code' => 'A', 'name' => 'Kabupaten A']);
-        $regionB = Region::create(['code' => 'B', 'name' => 'Kabupaten B']);
-        $year = ReportingYear::create(['year' => 2024, 'status' => 'open']);
+        $regionA = Region::create(['code' => 'A'.$suffix, 'name' => 'Kabupaten A'.$suffix]);
+        $regionB = Region::create(['code' => 'B'.$suffix, 'name' => 'Kabupaten B'.$suffix]);
+        $year = ReportingYear::create(['year' => $suffix ? 2025 : 2024, 'status' => 'open']);
         $table = ReportingTable::create([
             'reporting_year_id' => $year->id,
             'code' => 'T01',
@@ -318,14 +401,14 @@ class HealthProfileApiTest extends TestCase
         ]);
         $operatorA = User::create([
             'name' => 'Operator A',
-            'email' => 'operator-a@example.com',
+            'email' => 'operator-a'.$suffix.'@example.com',
             'password' => Hash::make('secret1'),
             'role' => 'operator',
             'region_id' => $regionA->id,
         ]);
         $operatorB = User::create([
             'name' => 'Operator B',
-            'email' => 'operator-b@example.com',
+            'email' => 'operator-b'.$suffix.'@example.com',
             'password' => Hash::make('secret1'),
             'role' => 'operator',
             'region_id' => $regionB->id,

@@ -430,9 +430,9 @@ export const api = {
         reporting_table_id: Number(detail.reportingTableId),
         version: detail.version,
         values: detail.rows.filter((row) => row.kind === 'base').map((row) => ({
-          indicator_id: Number(row.id), value: row.value || null,
-          not_applicable: row.notApplicable,
-          not_applicable_reason: row.notApplicable ? row.notApplicableReason : null,
+          indicator_id: Number(row.id), value: (detail.group === 'T01' || detail.group === 'T02') && row.notApplicable && !row.value.trim() ? 0 : row.value || null,
+          not_applicable: (detail.group === 'T01' || detail.group === 'T02') ? false : row.notApplicable,
+          not_applicable_reason: (detail.group === 'T01' || detail.group === 'T02') ? null : row.notApplicable ? row.notApplicableReason : null,
         })),
       }),
     }, token)

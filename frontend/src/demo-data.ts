@@ -84,6 +84,7 @@ export function demoTableDetail(id: string, year: number): ReportingTableDetail 
   }))
   return {
     ...table,
+    group: table.number === 1 ? 'T01' : table.group,
     reportingTableId: table.id,
     regionId: '1',
     submissionId: table.id,

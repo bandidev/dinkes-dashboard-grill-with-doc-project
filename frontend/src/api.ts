@@ -67,6 +67,7 @@ export type IndicatorRow = {
 }
 
 export type ReportingTableDetail = ReportingTable & {
+  scope?: 'province'
   submissionId?: string
   reportingTableId: string
   regionId: string
@@ -161,6 +162,15 @@ type ApiWorksheet = {
     values: Record<string, string | number | null>
     calculated_values: Record<string, number | null>
   }>
+}
+
+type ApiProvince = {
+  table: ApiTable
+  values: Record<string, number>
+  calculated_values: Record<string, number | null>
+  complete_base_count: number
+  base_count: number
+  region_count: number
 }
 
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
@@ -361,6 +371,31 @@ export const api = {
         }
       }),
       headerCandidates: table.source_metadata?.header_candidates || [],
+    }
+  },
+  async provinceTable(token: string, id: string, year: number): Promise<ReportingTableDetail | null> {
+    const { reportingYear } = await reportingContext(token, year)
+    const item = (await submissionList(token, reportingYear.id)).find((candidate) => String(candidate.reporting_table.id) === id)
+    if (item?.reporting_table.code !== 'T02' || item.reporting_table.mapping_status !== 'ready') return null
+    const province = await request<ApiProvince>(`/reporting-tables/${id}/province`, {}, token)
+    return {
+      ...tableFromSubmission(item),
+      scope: 'province',
+      regionId: '',
+      reportingTableId: id,
+      description: province.table.description || 'Rekap jumlah penduduk Provinsi Kepulauan Bangka Belitung.',
+      year: reportingYear.year,
+      region: 'Provinsi Kepulauan Bangka Belitung',
+      completion: province.base_count ? Math.round(province.complete_base_count / province.base_count * 100) : 0,
+      rows: province.table.indicators.map((indicator) => ({
+        id: String(indicator.id), code: indicator.code, name: indicator.name,
+        category: indicator.categories ? Object.values(indicator.categories).join(' • ') : '',
+        unit: indicator.unit || '—',
+        value: String((indicator.value_kind === 'base' ? province.values[String(indicator.id)] : province.calculated_values[String(indicator.id)]) ?? ''),
+        kind: indicator.value_kind, dataType: indicator.data_type, required: indicator.is_required,
+        notApplicable: false, notApplicableReason: '',
+      })),
+      headerCandidates: [],
     }
   },
   async tableOneWorksheet(token: string, reportingTableId: string): Promise<TableOneWorksheet> {

@@ -92,4 +92,64 @@ class TableTwoMappingTest extends TestCase
             'indicators' => [['code' => 'WRONG', 'name' => 'Header', 'data_type' => 'numeric', 'is_required' => true]],
         ])->assertStatus(409);
     }
+
+    public function test_province_aggregates_current_region_values_only_when_every_region_has_data(): void
+    {
+        $this->seed();
+        $table = ReportingTable::where('code', 'T02')->firstOrFail();
+        $path = "/api/reporting-tables/{$table->id}/province";
+        Sanctum::actingAs(User::where('role', 'administrator')->firstOrFail());
+        $otherTable = ReportingTable::where('code', 'T01')->firstOrFail();
+        $this->getJson("/api/reporting-tables/{$otherTable->id}/province")->assertNotFound();
+        $table->update(['mapping_status' => 'pending']);
+        $this->getJson($path)->assertNotFound();
+        $this->artisan('profile:import-catalog', [
+            'workbook' => base_path('../PROFIL-KES_2024_FINAL(hasilperbaikan).xlsx'), '--year' => 2024,
+        ])->assertSuccessful();
+        $this->artisan('profile:map-table-two', ['--year' => 2024])->assertSuccessful();
+        $table->load('indicators');
+        $id = fn (string $code) => (string) $table->indicators->firstWhere('code', $code)->id;
+        $baseCount = IndicatorValue::count();
+
+        $this->getJson($path)->assertOk()
+            ->assertJsonPath('complete_base_count', 32)
+            ->assertJsonPath('region_count', 7)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_L'), 790861)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_P'), 751742)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL'), 1542603)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_RASIO'), 105.2)
+            ->assertJsonPath('calculated_values.'.$id('ANGKA_BEBAN_TANGGUNGAN'), 45.10);
+        $this->assertSame($baseCount, IndicatorValue::count());
+
+        $indicator = $table->indicators->firstWhere('code', 'PENDUDUK_0_4_L');
+        $value = IndicatorValue::where('indicator_id', $indicator->id)->firstOrFail();
+        $original = (float) $value->numeric_value;
+        $before = $this->getJson($path)->json('values.'.$id('PENDUDUK_0_4_L'));
+        $value->update(['numeric_value' => 0]);
+        $this->getJson($path)->assertOk()
+            ->assertJsonPath('complete_base_count', 32)
+            ->assertJsonPath('values.'.$id('PENDUDUK_0_4_L'), (int) ($before - $original));
+        $value->update(['numeric_value' => null]);
+        $this->getJson($path)->assertOk()
+            ->assertJsonPath('complete_base_count', 31)
+            ->assertJsonMissingPath('values.'.$id('PENDUDUK_0_4_L'))
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_0_4_TOTAL'), null)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL'), null)
+            ->assertJsonPath('calculated_values.'.$id('ANGKA_BEBAN_TANGGUNGAN'), null);
+        $value->update(['not_applicable' => true, 'numeric_value' => 20]);
+        $this->getJson($path)->assertOk()->assertJsonPath('complete_base_count', 31);
+
+        $value->update(['not_applicable' => false, 'numeric_value' => 0]);
+        $female = $table->indicators->firstWhere('code', 'PENDUDUK_0_4_P');
+        IndicatorValue::where('indicator_id', $female->id)->update(['numeric_value' => 0]);
+        $this->getJson($path)->assertOk()
+            ->assertJsonPath('complete_base_count', 32)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_0_4_RASIO'), null);
+
+        $value->delete();
+        $this->getJson($path)->assertOk()->assertJsonPath('complete_base_count', 31);
+
+        Sanctum::actingAs(User::where('role', 'operator')->firstOrFail());
+        $this->getJson($path)->assertForbidden();
+    }
 }

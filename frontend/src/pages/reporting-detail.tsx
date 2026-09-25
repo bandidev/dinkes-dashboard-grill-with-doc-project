@@ -24,7 +24,7 @@ export function ReportingDetailPage() {
   const previewSession = session?.token.startsWith('preview-') ?? false
   const regionId = Number(searchParams.get('regionId')) || (isAdmin ? undefined : Number(session?.user.regionId) || undefined)
   const preview = session?.token.startsWith('preview-') ? demoTableDetail(id, year) : undefined
-  const { data, error } = useApiData(() => isAdmin && !regionId ? Promise.resolve(null) : api.reportingTable(session!.token, id, year, regionId), [session?.token, id, year, regionId, isAdmin], preview)
+  const { data, error, loading } = useApiData(() => isAdmin && !regionId && !previewSession ? api.provinceTable(session!.token, id, year) : api.reportingTable(session!.token, id, year, regionId), [session?.token, id, year, regionId, isAdmin, previewSession], preview)
   const { data: regions, error: regionsError } = useApiData(() => isAdmin && !previewSession ? api.regions(session!.token) : Promise.resolve([]), [session?.token, isAdmin, previewSession])
   const [detail, setDetail] = useState<ReportingTableDetail | null>(preview || null)
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
@@ -59,16 +59,16 @@ export function ReportingDetailPage() {
     } else blocker.reset()
   }, [blocker, formDirty])
 
-  if (isAdmin && !previewSession && !regionId) return <>
+  if (isAdmin && !previewSession && !regionId && !loading && !error && data === null) return <>
     <Link to="/reporting-tables" className="mb-4 inline-flex min-h-10 items-center gap-2 text-xs font-bold text-archive hover:underline"><ArrowLeft className="size-3.5" />Tabel Pelaporan</Link>
     <Panel className="max-w-xl overflow-hidden">
       <div className="border-b border-line-soft p-5"><h1 className="text-base font-bold">Pilih Kabupaten/Kota</h1><p className="mt-1 text-sm text-ink-muted">Rincian Nilai Indikator dan status ditampilkan untuk satu wilayah.</p></div>
       <div className="p-5"><label htmlFor="detail-region" className="text-xs font-semibold">Kabupaten/Kota</label>{regionsError ? <p className="mt-2 text-sm text-correction">{regionsError}</p> : <Select id="detail-region" className="mt-1.5" value={regionId || ''} disabled={!regions?.length} onChange={(event) => setSearchParams((current) => { const next = new URLSearchParams(current); next.set('regionId', event.target.value); next.set('year', String(year)); return next })}><option value="" disabled>{regions?.length ? 'Pilih wilayah…' : 'Memuat wilayah…'}</option>{regions?.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</Select>}</div>
     </Panel>
   </>
-  const staleDetail = Boolean(detail && (detail.reportingTableId !== id || (regionId && detail.regionId !== String(regionId))))
+  const staleDetail = Boolean(detail && (detail.reportingTableId !== id || detail.year !== year || (isAdmin && !previewSession && (regionId ? detail.regionId !== String(regionId) || detail.scope === 'province' : detail.scope !== 'province'))))
   if (error) return <ErrorState message={error} />
-  if (!detail || staleDetail) return <LoadingState label="Memuat rincian Tabel Pelaporan…" />
+  if (loading || !detail || staleDetail) return <LoadingState label="Memuat rincian Tabel Pelaporan…" />
 
   const editable = detail.mappingStatus === 'ready' && !isAdmin && detail.status === 'not_started'
   const requiredRows = detail.rows.filter((row) => row.kind === 'base' && row.required)
@@ -185,20 +185,20 @@ export function ReportingDetailPage() {
 
   return (
     <>
-      <Link to={`/reporting-tables${isAdmin ? `?year=${year}&regionId=${detail.regionId}` : ''}`} className="mb-4 inline-flex min-h-10 items-center gap-2 text-xs font-bold text-archive hover:underline"><ArrowLeft className="size-3.5" />Tabel Pelaporan</Link>
+      <Link to={`/reporting-tables${isAdmin ? `?year=${year}${detail.scope === 'province' ? '' : `&regionId=${detail.regionId}`}` : ''}`} className="mb-4 inline-flex min-h-10 items-center gap-2 text-xs font-bold text-archive hover:underline"><ArrowLeft className="size-3.5" />Tabel Pelaporan</Link>
       <div className="mb-4 flex flex-col justify-between gap-4 border-b border-line-soft pb-4 xl:flex-row xl:items-end">
         <div className="min-w-0">
-          <div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-bold tracking-[0.06em] text-archive">TABEL {String(detail.number).padStart(2, '0')}</span><StatusBadge status={detail.status} /></div>
+          <div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-bold tracking-[0.06em] text-archive">TABEL {String(detail.number).padStart(2, '0')}</span>{detail.scope !== 'province' ? <StatusBadge status={detail.status} /> : null}</div>
           <h1 className="max-w-5xl text-balance text-lg font-bold leading-snug tracking-[-0.02em] sm:text-xl">{detail.name}</h1>
           <p className="mt-2 text-xs text-ink-muted">{detail.region} <span aria-hidden="true">·</span> Tahun Pelaporan {detail.year}</p>
         </div>
-        {isAdmin && regions?.length ? <label className="flex min-w-52 flex-col gap-1 text-[11px] font-semibold text-ink-muted">Kabupaten/Kota<Select value={detail.regionId} disabled={changingStatus || statusDialog !== null} onChange={(event) => setSearchParams((current) => { const next = new URLSearchParams(current); next.set('regionId', event.target.value); next.set('year', String(year)); return next })}>{regions.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</Select></label> : null}
+        {isAdmin && regions?.length ? <label className="flex min-w-52 flex-col gap-1 text-[11px] font-semibold text-ink-muted">{detail.group === 'T02' ? 'Wilayah' : 'Kabupaten/Kota'}<Select value={detail.regionId} disabled={changingStatus || statusDialog !== null} onChange={(event) => setSearchParams((current) => { const next = new URLSearchParams(current); if (event.target.value) next.set('regionId', event.target.value); else next.delete('regionId'); next.set('year', String(year)); return next })}>{detail.group === 'T02' ? <option value="">Provinsi</option> : null}{regions.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</Select></label> : null}
         <div className="flex flex-wrap gap-2">
           {editable && !spreadsheetView ? <Button variant="outline" onClick={save} disabled={saving || !formDirty}><Save data-icon="inline-start" />{saving ? 'Menyimpan…' : 'Simpan draft'}</Button> : null}
           {editable ? <Button onClick={() => changeStatus('complete')} disabled={missing > 0 || !detail.submissionId || formDirty || worksheetBusy || changingStatus}><CheckCircle2 data-icon="inline-start" />{changingStatus ? 'Memproses…' : 'Selesai Input'}</Button> : null}
           {!isAdmin && detail.status === 'completed' ? <Button variant="outline" disabled={changingStatus} onClick={() => changeStatus('reopen')}><RotateCcw data-icon="inline-start" />Perbaiki Input</Button> : null}
-          {isAdmin && detail.status === 'completed' ? <Button disabled={changingStatus} onClick={() => changeStatus('verify')}><CheckCircle2 data-icon="inline-start" />Verifikasi</Button> : null}
-          {isAdmin && detail.status === 'verified' ? <Button variant="outline" disabled={changingStatus} onClick={() => changeStatus('unverify')}><RotateCcw data-icon="inline-start" />Batalkan Verifikasi</Button> : null}
+          {isAdmin && detail.scope !== 'province' && detail.status === 'completed' ? <Button disabled={changingStatus} onClick={() => changeStatus('verify')}><CheckCircle2 data-icon="inline-start" />Verifikasi</Button> : null}
+          {isAdmin && detail.scope !== 'province' && detail.status === 'verified' ? <Button variant="outline" disabled={changingStatus} onClick={() => changeStatus('unverify')}><RotateCcw data-icon="inline-start" />Batalkan Verifikasi</Button> : null}
         </div>
       </div>
 
@@ -212,8 +212,8 @@ export function ReportingDetailPage() {
               : editable && !detail.submissionId && !spreadsheetView ? <FeedbackBanner className="mb-4" tone="info" title="Simpan draft">Simpan sebelum menyatakan Selesai Input.</FeedbackBanner> : null}
 
       {spreadsheetView ? <TableOneWorksheetView token={session!.token} reportingTableId={detail.reportingTableId} onSynced={syncWorksheet} onBusyChange={setWorksheetBusy} /> : <Panel className="overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper-inset px-4 py-3 text-xs"><span className="font-semibold text-ink-muted">Nilai wajib <strong className="ml-1 font-mono text-base text-ink">{requiredRows.length - missing}/{requiredRows.length}</strong></span><span className={missing ? 'font-semibold text-correction' : 'font-semibold text-archive'}>{missing ? `${missing} belum lengkap` : 'Lengkap'}</span></div>
-        {detail.group === 'T02' && detail.mappingStatus === 'ready' && !previewSession ? <TableTwoAgeGrid rows={detail.rows} editable={editable} dirtyRows={dirtyRows} onChange={updateRow} /> : <div className="overflow-x-auto scrollbar-thin"><table className="w-full min-w-[680px] border-collapse text-left text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-paper-inset px-4 py-3 text-xs"><span className="font-semibold text-ink-muted">{detail.scope === 'province' ? 'Data lengkap seluruh wilayah' : 'Nilai wajib'} <strong className="ml-1 font-mono text-base text-ink">{requiredRows.length - missing}/{requiredRows.length}</strong></span><span className={missing ? 'font-semibold text-correction' : 'font-semibold text-archive'}>{missing ? detail.scope === 'province' ? `${missing} rekap belum lengkap` : `${missing} belum lengkap` : 'Lengkap'}</span></div>
+        {detail.group === 'T02' && detail.mappingStatus === 'ready' && !previewSession ? <TableTwoAgeGrid rows={detail.rows} editable={editable} dirtyRows={dirtyRows} onChange={updateRow} totalLabel={detail.scope === 'province' ? 'Provinsi' : 'Kabupaten/Kota'} province={detail.scope === 'province'} /> : <div className="overflow-x-auto scrollbar-thin"><table className="w-full min-w-[680px] border-collapse text-left text-xs">
           <thead className="bg-paper-inset text-[10px] uppercase tracking-[0.08em] text-ink-muted"><tr><th className="px-4 py-2.5 font-bold">Indikator</th><th className="w-28 px-3 py-2.5 font-bold">Satuan</th><th className="w-72 px-4 py-2.5 font-bold">Nilai</th></tr></thead>
           {(['base', 'derived'] as const).map((kind) => <tbody key={kind}>
             <tr className="border-t border-line"><th colSpan={3} scope="rowgroup" className="bg-paper-raised px-4 py-2.5 text-left"><span className="font-bold">{kind === 'base' ? 'Data yang perlu diisi' : 'Hasil perhitungan'}</span>{kind === 'derived' ? <span className="ml-2 rounded-sm bg-paper-inset px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-ink-muted">Otomatis</span> : null}</th></tr>

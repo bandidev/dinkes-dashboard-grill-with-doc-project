@@ -49,6 +49,43 @@ class SubmissionController extends Controller
         ];
     }
 
+    public function province(ReportingTable $reportingTable, IndicatorCalculator $calculator)
+    {
+        abort_unless($reportingTable->code === 'T02' && $reportingTable->mapping_status === 'ready', 404);
+        $reportingTable->load('indicators');
+        $regions = Region::pluck('id');
+        $submissions = Submission::with('values')
+            ->where('reporting_table_id', $reportingTable->id)
+            ->whereIn('region_id', $regions)
+            ->get()
+            ->keyBy('region_id');
+        $regionValues = $submissions->map(fn (Submission $submission) => $submission->values->keyBy('indicator_id'));
+        $values = collect();
+        foreach ($reportingTable->indicators->where('value_kind', 'base') as $indicator) {
+            if ($regions->isEmpty()) {
+                continue;
+            }
+            $sum = 0;
+            foreach ($regions as $regionId) {
+                $value = $regionValues->get($regionId)?->get($indicator->id);
+                if (! $value || $value->not_applicable || $value->numeric_value === null) {
+                    continue 2;
+                }
+                $sum += (float) $value->numeric_value;
+            }
+            $values->push(new IndicatorValue(['indicator_id' => $indicator->id, 'numeric_value' => $sum]));
+        }
+
+        return [
+            'table' => $reportingTable,
+            'values' => $values->pluck('numeric_value', 'indicator_id'),
+            'calculated_values' => $calculator->calculate($reportingTable->indicators, $values),
+            'complete_base_count' => $values->count(),
+            'base_count' => $reportingTable->indicators->where('value_kind', 'base')->count(),
+            'region_count' => $regions->count(),
+        ];
+    }
+
     public function index(Request $request)
     {
         $data = $request->validate([

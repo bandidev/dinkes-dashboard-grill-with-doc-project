@@ -30,6 +30,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::middleware('role:administrator')->group(function () {
+        Route::get('/reporting-tables/{reportingTable}/province', [SubmissionController::class, 'province']);
         Route::apiResource('users', UserController::class);
         Route::get('/reporting-years/{reportingYear}/catalog-import', [CatalogController::class, 'importReport']);
         Route::post('/regions', [CatalogController::class, 'storeRegion']);

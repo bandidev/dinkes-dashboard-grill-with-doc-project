@@ -73,7 +73,7 @@ class WorkbookCatalogImporter
                     'reporting_year_id' => $reportingYear->id,
                     'code' => $table['code'],
                 ]);
-                $mappingStatus = ! $replace && $reportingTable->exists && $reportingTable->mapping_status === 'ready' && in_array($table['code'], ['T02', 'T03'], true)
+                $mappingStatus = ! $replace && $reportingTable->exists && $reportingTable->mapping_status === 'ready' && in_array($table['code'], ['T02', 'T03', 'T04'], true)
                     ? 'ready'
                     : 'pending';
                 $ready += $mappingStatus === 'ready' ? 1 : 0;

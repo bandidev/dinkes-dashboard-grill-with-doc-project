@@ -67,10 +67,10 @@ class WorkbookCatalogImporterTest extends TestCase
         }
     }
 
-    public function test_reimport_preserves_ready_table_two_and_three_mappings(): void
+    public function test_reimport_preserves_ready_table_two_three_and_four_mappings(): void
     {
         $year = ReportingYear::create(['year' => 2024, 'status' => 'open']);
-        foreach (['T02', 'T03'] as $code) {
+        foreach (['T02', 'T03', 'T04'] as $code) {
             ReportingTable::create([
                 'reporting_year_id' => $year->id,
                 'code' => $code,
@@ -85,12 +85,16 @@ class WorkbookCatalogImporterTest extends TestCase
         $sheetThree = $workbook->createSheet();
         $sheetThree->setTitle('3');
         $sheetThree->setCellValue('A3', 'TABEL 3 UJI');
+        $sheetFour = $workbook->createSheet();
+        $sheetFour->setTitle('4');
+        $sheetFour->setCellValue('A3', 'TABEL 4 UJI');
         (new Xlsx($workbook))->save($path);
 
         try {
             app(WorkbookCatalogImporter::class)->import($path, 2024);
             $this->assertDatabaseHas('reporting_tables', ['reporting_year_id' => $year->id, 'code' => 'T02', 'mapping_status' => 'ready']);
             $this->assertDatabaseHas('reporting_tables', ['reporting_year_id' => $year->id, 'code' => 'T03', 'mapping_status' => 'ready']);
+            $this->assertDatabaseHas('reporting_tables', ['reporting_year_id' => $year->id, 'code' => 'T04', 'mapping_status' => 'ready']);
         } finally {
             $workbook->disconnectWorksheets();
             unlink($path);

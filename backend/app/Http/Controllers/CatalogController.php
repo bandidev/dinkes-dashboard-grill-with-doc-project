@@ -174,7 +174,7 @@ class CatalogController extends Controller
 
     public function mapIndicators(Request $request, ReportingTable $reportingTable)
     {
-        abort_if(in_array($reportingTable->code, ['T02', 'T03'], true), 409, 'Tabel ini dipetakan berdasarkan struktur khusus dari workbook.');
+        abort_if(in_array($reportingTable->code, ['T02', 'T03', 'T04'], true), 409, 'Tabel ini dipetakan berdasarkan struktur khusus dari workbook.');
         abort_if(Submission::where('reporting_table_id', $reportingTable->id)->exists(), 409, 'Tabel Pelaporan sudah memiliki data.');
         abort_if($reportingTable->mapping_status !== 'pending', 409, 'Pemetaan siap tidak dapat diganti melalui header generik.');
         $data = $request->validate([

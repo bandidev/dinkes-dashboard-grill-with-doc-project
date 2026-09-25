@@ -82,13 +82,24 @@ class DatabaseSeeder extends Seeder
                     ['code' => 'CATATAN_KIA', 'name' => 'Catatan Kesehatan Ibu dan Anak', 'data_type' => 'text', 'is_required' => false],
                 ],
             ],
+            [
+                'code' => 'T04',
+                'name' => 'Jumlah Fasilitas Pelayanan Kesehatan Menurut Kepemilikan',
+                'description' => 'Jumlah fasilitas kesehatan menurut jenis fasilitas dan pemilikan/pengelola.',
+                'source_sheet' => '4',
+                'mapping_status' => 'pending',
+                'indicators' => [
+                    ['code' => 'FASILITAS_PENDING', 'name' => 'Jalankan pemetaan khusus Sheet 4', 'data_type' => 'numeric', 'unit' => 'unit'],
+                ],
+            ],
         ];
 
         foreach ($tables as $tablePosition => $tableData) {
             $indicators = $tableData['indicators'];
             unset($tableData['indicators']);
             $table = ReportingTable::firstOrNew(['reporting_year_id' => $year->id, 'code' => $tableData['code']]);
-            if ($tableData['code'] === 'T03' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'PENDUDUK_15_PLUS_L')->exists()) {
+            if (($tableData['code'] === 'T03' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'PENDUDUK_15_PLUS_L')->exists())
+                || ($tableData['code'] === 'T04' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'FASILITAS_RUMAH_SAKIT_UMUM_KEMENKES')->exists())) {
                 continue;
             }
             $table->fill([...$tableData, 'position' => $tablePosition + 1])->save();

@@ -63,6 +63,7 @@ export type IndicatorRow = {
   required: boolean
   notApplicable: boolean
   notApplicableReason: string
+  metadata?: Record<string, string>
   note?: string
 }
 
@@ -362,6 +363,7 @@ export const api = {
         return {
           id: String(indicator.id), code: indicator.code, name: indicator.name,
           category, unit: indicator.unit || '—',
+          metadata: indicator.categories || undefined,
           value: indicator.value_kind === 'derived'
             ? String(submission?.calculated_values?.[String(indicator.id)] ?? '')
             : valueText(value, indicator),
@@ -376,7 +378,7 @@ export const api = {
   async provinceTable(token: string, id: string, year: number): Promise<ReportingTableDetail | null> {
     const { reportingYear } = await reportingContext(token, year)
     const item = (await submissionList(token, reportingYear.id)).find((candidate) => String(candidate.reporting_table.id) === id)
-    if (!item || !['T02', 'T03'].includes(item.reporting_table.code)) return null
+    if (!item || !['T02', 'T03', 'T04'].includes(item.reporting_table.code)) return null
     const table = item.reporting_table
     const province = table.mapping_status === 'ready'
       ? await request<ApiProvince>(`/reporting-tables/${id}/province`, {}, token)
@@ -393,6 +395,7 @@ export const api = {
       rows: (province?.table.indicators || []).map((indicator) => ({
         id: String(indicator.id), code: indicator.code, name: indicator.name,
         category: indicator.categories ? Object.values(indicator.categories).join(' • ') : '',
+        metadata: indicator.categories || undefined,
         unit: indicator.unit || '—',
         value: String((indicator.value_kind === 'base' ? province?.values[String(indicator.id)] : province?.calculated_values[String(indicator.id)]) ?? ''),
         kind: indicator.value_kind, dataType: indicator.data_type, required: indicator.is_required,
@@ -468,9 +471,9 @@ export const api = {
         reporting_table_id: Number(detail.reportingTableId),
         version: detail.version,
         values: detail.rows.filter((row) => row.kind === 'base').map((row) => ({
-          indicator_id: Number(row.id), value: ['T01', 'T02', 'T03'].includes(detail.group) && row.notApplicable && !row.value.trim() ? 0 : row.value || null,
-          not_applicable: ['T01', 'T02', 'T03'].includes(detail.group) ? false : row.notApplicable,
-          not_applicable_reason: ['T01', 'T02', 'T03'].includes(detail.group) ? null : row.notApplicable ? row.notApplicableReason : null,
+          indicator_id: Number(row.id), value: ['T01', 'T02', 'T03', 'T04'].includes(detail.group) && row.notApplicable && !row.value.trim() ? 0 : row.value || null,
+          not_applicable: ['T01', 'T02', 'T03', 'T04'].includes(detail.group) ? false : row.notApplicable,
+          not_applicable_reason: ['T01', 'T02', 'T03', 'T04'].includes(detail.group) ? null : row.notApplicable ? row.notApplicableReason : null,
         })),
       }),
     }, token)

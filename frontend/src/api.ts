@@ -6,19 +6,29 @@ export type SessionUser = {
   email: string
   role: UserRole
   region?: string
+  regionId?: string
 }
 
 export type ReportingStatus = 'not_started' | 'completed' | 'verified'
 
+export type RegionStatusCounts = {
+  total: number
+  verified: number
+  completed: number
+  notStarted: number
+}
+
 export type ReportingTable = {
   id: string
   submissionId?: string
+  regionId?: string
   version: number
   number: number
   name: string
   group: string
   status: ReportingStatus
   completion: number
+  regionCounts?: RegionStatusCounts
   updatedAt?: string
   updatedBy?: string
   mappingStatus: 'ready' | 'pending'
@@ -59,6 +69,7 @@ export type IndicatorRow = {
 export type ReportingTableDetail = ReportingTable & {
   submissionId?: string
   reportingTableId: string
+  regionId: string
   description: string
   year: number
   region: string
@@ -112,11 +123,12 @@ type ApiTable = {
 }
 type ApiSubmissionListItem = {
   id: number | null
-  region_id: number
+  region_id: number | null
   status: ReportingStatus
   version: number
   values_count: number
   updated_at: string | null
+  region_counts?: { total: number; verified: number; completed: number; not_started: number }
   reporting_table: ApiTable
 }
 type ApiValue = {
@@ -210,8 +222,8 @@ async function request<T>(path: string, options: RequestInit = {}, token?: strin
   }
 }
 
-function normalizeUser(user: { id: number; name: string; email: string; role: UserRole; region?: Region | null }): SessionUser {
-  return { ...user, id: String(user.id), region: user.region?.name }
+function normalizeUser(user: { id: number; name: string; email: string; role: UserRole; region_id?: number | null; region?: Region | null }): SessionUser {
+  return { ...user, id: String(user.id), region: user.region?.name, regionId: user.region_id ? String(user.region_id) : undefined }
 }
 
 async function reportingContext(token: string, requestedYear: number) {
@@ -226,17 +238,27 @@ async function reportingContext(token: string, requestedYear: number) {
 
 function tableFromSubmission(item: ApiSubmissionListItem): ReportingTable {
   const indicatorCount = item.reporting_table.indicators.length
+  const regionCounts = item.region_counts
   return {
     id: String(item.reporting_table.id),
     submissionId: item.id ? String(item.id) : undefined,
+    regionId: item.region_id ? String(item.region_id) : undefined,
     version: item.version,
     number: item.reporting_table.position,
     name: item.reporting_table.name,
     group: item.reporting_table.code,
     status: item.status,
-    completion: item.status === 'completed' || item.status === 'verified'
-      ? 100
-      : indicatorCount ? Math.round(item.values_count / indicatorCount * 100) : 0,
+    completion: regionCounts
+      ? regionCounts.total ? Math.round((regionCounts.verified + regionCounts.completed) / regionCounts.total * 100) : 0
+      : item.status === 'completed' || item.status === 'verified'
+        ? 100
+        : indicatorCount ? Math.round(item.values_count / indicatorCount * 100) : 0,
+    regionCounts: regionCounts ? {
+      total: regionCounts.total,
+      verified: regionCounts.verified,
+      completed: regionCounts.completed,
+      notStarted: regionCounts.not_started,
+    } : undefined,
     updatedAt: item.updated_at || undefined,
     mappingStatus: item.reporting_table.mapping_status,
   }
@@ -264,13 +286,14 @@ async function submissionList(token: string, yearId: number, regionId?: number) 
 
 export const api = {
   async login(email: string, password: string) {
-    const payload = await request<{ token: string; user: { id: number; name: string; email: string; role: UserRole; region?: Region | null } }>('/login', {
+    const payload = await request<{ token: string; user: { id: number; name: string; email: string; role: UserRole; region_id?: number | null; region?: Region | null } }>('/login', {
       method: 'POST',
       body: JSON.stringify({ email, password, device_name: 'siprokkes-web' }),
     })
     return { token: payload.token, user: normalizeUser(payload.user) }
   },
   logout: (token: string) => request<void>('/logout', { method: 'POST' }, token),
+  regions: (token: string) => request<Region[]>('/regions', {}, token),
   async dashboard(token: string, year: number): Promise<DashboardData> {
     const years = await request<ReportingYear[]>('/reporting-years', {}, token)
     const reportingYear = years.find((item) => item.year === year) || years[0]
@@ -279,7 +302,7 @@ export const api = {
       reporting_year: ReportingYear
       regions: Array<{ region: Region; total_tables: number; not_started: number; completed: number; verified: number }>
       reporting_tables: Array<{ id: number; code: string; name: string; position: number; status: ReportingStatus; completion: number }>
-      recent_submissions: Array<{ id: number; name: string; position: number; status: ReportingStatus; region: string; updated_at: string }>
+      recent_submissions: Array<{ id: number; region_id: number; name: string; position: number; status: ReportingStatus; region: string; updated_at: string }>
     }>(`/dashboard?reporting_year_id=${reportingYear.id}`, {}, token)
     return {
       year: payload.reporting_year.year,
@@ -294,7 +317,7 @@ export const api = {
       })),
       recentTables: payload.recent_submissions.map((table) => ({
         id: String(table.id), version: 0, number: table.position, name: table.name, group: table.region,
-        status: table.status, completion: table.status === 'not_started' ? 0 : 100,
+        regionId: String(table.region_id), status: table.status, completion: table.status === 'not_started' ? 0 : 100,
         updatedAt: table.updated_at, updatedBy: table.region, mappingStatus: 'ready',
       })),
     }
@@ -305,11 +328,12 @@ export const api = {
     if (!reportingYear) throw new ApiError('Tahun Pelaporan belum tersedia.', 404)
     return (await submissionList(token, reportingYear.id)).map(tableFromSubmission)
   },
-  async reportingTable(token: string, id: string, year: number): Promise<ReportingTableDetail> {
+  async reportingTable(token: string, id: string, year: number, regionId?: number): Promise<ReportingTableDetail> {
     const { reportingYear, regions } = await reportingContext(token, year)
-    const item = (await submissionList(token, reportingYear.id, regions[0]?.id))
+    const item = (await submissionList(token, reportingYear.id, regionId))
       .find((candidate) => String(candidate.reporting_table.id) === id)
     if (!item) throw new ApiError('Tabel Pelaporan tidak ditemukan.', 404)
+    if (item.region_id === null) throw new ApiError('Pilih Kabupaten/Kota untuk membuka rincian Tabel Pelaporan.', 422)
     const submission = item.id ? await request<ApiSubmission>(`/submissions/${item.id}`, {}, token) : null
     const table = submission?.reporting_table || item.reporting_table
     const values = new Map((submission?.values || []).map((value) => [value.indicator_id, value]))
@@ -318,9 +342,10 @@ export const api = {
       submissionId: submission ? String(submission.id) : undefined,
       version: submission?.version ?? item.version,
       reportingTableId: String(table.id),
+      regionId: String(item.region_id),
       description: table.description || 'Tabel Pelaporan Profil Kesehatan.',
       year: reportingYear.year,
-      region: submission?.region.name || regions[0]?.name || 'Kabupaten/Kota',
+      region: submission?.region.name || regions.find((region) => region.id === item.region_id)?.name || 'Kabupaten/Kota',
       rows: table.indicators.map((indicator) => {
         const value = values.get(indicator.id)
         const category = indicator.categories ? Object.values(indicator.categories).join(' • ') : (indicator.is_required ? 'Wajib' : 'Opsional')
@@ -434,7 +459,7 @@ export const api = {
     await request(`/submissions/${detail.submissionId}/${action}`, {
       method: 'POST', body: JSON.stringify({ version: detail.version, ...(reason ? { reason } : {}) }),
     }, token)
-    return api.reportingTable(token, detail.reportingTableId, detail.year)
+    return api.reportingTable(token, detail.reportingTableId, detail.year, Number(detail.regionId))
   },
   async users(token: string): Promise<ManagedUser[]> {
     const users = await request<Array<{ id: number; name: string; email: string; role: UserRole; region?: Region | null }>>('/users', {}, token)
@@ -461,7 +486,7 @@ export const api = {
         })),
       }),
     }, token)
-    return api.reportingTable(token, detail.reportingTableId, detail.year)
+    return api.reportingTable(token, detail.reportingTableId, detail.year, Number(detail.regionId))
   },
   async catalogImport(token: string, year: number) {
     const { reportingYear } = await reportingContext(token, year)

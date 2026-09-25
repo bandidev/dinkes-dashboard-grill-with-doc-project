@@ -55,8 +55,13 @@ class SubmissionController extends Controller
             'reporting_year_id' => ['required', 'exists:reporting_years,id'],
             'region_id' => ['nullable', 'exists:regions,id'],
         ]);
-        $regionId = $request->user()->role === 'operator' ? $request->user()->region_id : ($data['region_id'] ?? null);
-        abort_unless($regionId, 422, 'region_id is required for administrators.');
+        $user = $request->user();
+        if ($user->role === 'administrator' && ! isset($data['region_id'])) {
+            return $this->allRegionsIndex((int) $data['reporting_year_id']);
+        }
+
+        $regionId = $user->role === 'operator' ? $user->region_id : $data['region_id'];
+        abort_unless($regionId, 422, 'The user must be assigned to a region.');
 
         $submissions = Submission::withCount('values')
             ->where('reporting_year_id', $data['reporting_year_id'])
@@ -85,6 +90,53 @@ class SubmissionController extends Controller
                     'completed_at' => $submission?->completed_at,
                     'verified_at' => $submission?->verified_at,
                     'updated_at' => $submission?->updated_at,
+                ];
+            });
+    }
+
+    private function allRegionsIndex(int $reportingYearId)
+    {
+        $regionCount = Region::count();
+        $counts = Submission::query()
+            ->selectRaw('reporting_table_id, status, count(*) as total')
+            ->where('reporting_year_id', $reportingYearId)
+            ->groupBy('reporting_table_id', 'status')
+            ->get()
+            ->groupBy('reporting_table_id');
+
+        return ReportingTable::with('indicators')
+            ->where('reporting_year_id', $reportingYearId)
+            ->orderBy('position')
+            ->get()
+            ->map(function (ReportingTable $table) use ($counts, $regionCount) {
+                if ($table->mapping_status !== 'ready') {
+                    $table->setRelation('indicators', collect());
+                }
+
+                $statuses = $counts->get($table->id, collect())->pluck('total', 'status');
+                $verified = (int) ($statuses['verified'] ?? 0);
+                $completed = (int) ($statuses['completed'] ?? 0);
+                $notStarted = max(0, $regionCount - $verified - $completed);
+
+                return [
+                    'id' => null,
+                    'region_id' => null,
+                    'reporting_year_id' => $table->reporting_year_id,
+                    'reporting_table' => $table,
+                    'status' => $regionCount > 0 && $verified === $regionCount
+                        ? 'verified'
+                        : ($verified + $completed > 0 ? 'completed' : 'not_started'),
+                    'version' => 0,
+                    'values_count' => 0,
+                    'region_counts' => [
+                        'total' => $regionCount,
+                        'verified' => $verified,
+                        'completed' => $completed,
+                        'not_started' => $notStarted,
+                    ],
+                    'completed_at' => null,
+                    'verified_at' => null,
+                    'updated_at' => null,
                 ];
             });
     }

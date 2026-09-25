@@ -6,6 +6,7 @@ use App\Models\Indicator;
 use App\Models\Region;
 use App\Models\ReportingTable;
 use App\Models\ReportingYear;
+use App\Models\Submission;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Hash;
@@ -55,6 +56,39 @@ class HealthProfileApiTest extends TestCase
         $this->postJson('/api/submissions/'.$submission['id'].'/complete', [
             'version' => $submission['version'],
         ])->assertForbidden();
+    }
+
+    public function test_administrator_submission_list_aggregates_all_regions_and_can_filter_one_region(): void
+    {
+        [$operatorA, $operatorB, $table] = $this->scenario();
+        $admin = User::create([
+            'name' => 'Administrator',
+            'email' => 'admin@example.com',
+            'password' => 'secret1',
+            'role' => 'administrator',
+        ]);
+        Submission::create([
+            'region_id' => $operatorA->region_id,
+            'reporting_year_id' => $table->reporting_year_id,
+            'reporting_table_id' => $table->id,
+            'status' => 'verified',
+        ]);
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/submissions?reporting_year_id='.$table->reporting_year_id)
+            ->assertOk()
+            ->assertJsonPath('0.region_id', null)
+            ->assertJsonPath('0.status', 'completed')
+            ->assertJsonPath('0.region_counts.total', 2)
+            ->assertJsonPath('0.region_counts.verified', 1)
+            ->assertJsonPath('0.region_counts.completed', 0)
+            ->assertJsonPath('0.region_counts.not_started', 1);
+
+        $this->getJson('/api/submissions?reporting_year_id='.$table->reporting_year_id.'&region_id='.$operatorB->region_id)
+            ->assertOk()
+            ->assertJsonPath('0.region_id', $operatorB->region_id)
+            ->assertJsonPath('0.status', 'not_started')
+            ->assertJsonMissingPath('0.region_counts');
     }
 
     public function test_status_transitions_optimistic_locking_and_edit_locks(): void

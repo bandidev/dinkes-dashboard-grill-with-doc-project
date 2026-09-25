@@ -48,7 +48,7 @@ export function DashboardPage() {
           <div><PanelTitle>Rel Status Tabel Pelaporan</PanelTitle><p className="mt-1 text-xs text-ink-muted">Setiap sel membuka rincian tabel. Nomor mengikuti urutan Katalog Indikator.</p></div>
           <div className="flex flex-wrap gap-2"><Badge tone="verified">{counts.verified} Terverifikasi</Badge><Badge tone="pending">{counts.completed} Sudah Diinput</Badge><Badge>{counts.not_started} Belum Diinput</Badge></div>
         </PanelHeader>
-        <div className="p-4"><StatusRail tables={data.reportingTables} /></div>
+        <div className="p-4"><StatusRail tables={data.reportingTables} year={data.year} /></div>
         <div className="grid border-t border-line-soft sm:grid-cols-[1fr_auto]">
           <div className="p-4">
             <div className="mb-2 flex items-baseline justify-between gap-3"><span className="text-xs font-semibold">Tabel siap atau sedang diperiksa</span><span className="font-mono text-sm font-bold tabular">{completion}%</span></div>
@@ -71,7 +71,7 @@ export function DashboardPage() {
 
         <Panel className="overflow-hidden">
           <PanelHeader><div><PanelTitle>Pembaruan Terakhir</PanelTitle><p className="mt-1 text-xs text-ink-muted">Aktivitas terbaru pada Tabel Pelaporan.</p></div></PanelHeader>
-           <div>{data.recentTables.length ? data.recentTables.map((table) => <Link key={`${table.id}-${table.updatedAt}`} to={`/reporting-tables/${table.id}`} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 border-b border-line-soft px-4 py-3 last:border-b-0 hover:bg-paper-inset"><span className="grid size-8 place-items-center rounded-[2px] border border-line bg-paper font-mono text-[10px] font-bold">{String(table.number).padStart(2, '0')}</span><div className="min-w-0"><p className="truncate text-xs font-semibold">{table.name}</p><div className="mt-1 flex flex-wrap items-center gap-2"><StatusBadge status={table.status} /><span className="text-[10px] text-ink-faint">{table.updatedBy}</span></div></div></Link>) : <p className="p-6 text-xs text-ink-muted">Belum ada aktivitas pada Tahun Pelaporan ini.</p>}</div>
+            <div>{data.recentTables.length ? data.recentTables.map((table) => <Link key={`${table.id}-${table.updatedAt}`} to={`/reporting-tables/${table.id}?year=${data.year}${table.regionId ? `&regionId=${table.regionId}` : ''}`} className="grid grid-cols-[32px_minmax(0,1fr)] gap-3 border-b border-line-soft px-4 py-3 last:border-b-0 hover:bg-paper-inset"><span className="grid size-8 place-items-center rounded-[2px] border border-line bg-paper font-mono text-[10px] font-bold">{String(table.number).padStart(2, '0')}</span><div className="min-w-0"><p className="truncate text-xs font-semibold">{table.name}</p><div className="mt-1 flex flex-wrap items-center gap-2"><StatusBadge status={table.status} /><span className="text-[10px] text-ink-faint">{table.updatedBy}</span></div></div></Link>) : <p className="p-6 text-xs text-ink-muted">Belum ada aktivitas pada Tahun Pelaporan ini.</p>}</div>
         </Panel>
       </div>
     </>

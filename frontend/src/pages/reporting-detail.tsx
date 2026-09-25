@@ -8,7 +8,7 @@ import { StatusBadge } from '../components/status'
 import { TableOneWorksheetView } from '../components/table-one-worksheet'
 import { Button } from '../components/ui/button'
 import { FeedbackBanner } from '../components/ui/feedback-banner'
-import { Input } from '../components/ui/field'
+import { Input, Select } from '../components/ui/field'
 import { Panel } from '../components/ui/panel'
 import { ReasonDialog } from '../components/ui/reason-dialog'
 import { demoTableDetail } from '../demo-data'
@@ -16,11 +16,15 @@ import { useApiData } from '../hooks/use-api-data'
 
 export function ReportingDetailPage() {
   const { id = '1' } = useParams()
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const { session } = useAuth()
   const year = Number(searchParams.get('year')) || 2024
+  const isAdmin = session?.user.role === 'administrator'
+  const previewSession = session?.token.startsWith('preview-') ?? false
+  const regionId = Number(searchParams.get('regionId')) || (isAdmin ? undefined : Number(session?.user.regionId) || undefined)
   const preview = session?.token.startsWith('preview-') ? demoTableDetail(id, year) : undefined
-  const { data, error, loading } = useApiData(() => api.reportingTable(session!.token, id, year), [session?.token, id, year], preview)
+  const { data, error } = useApiData(() => isAdmin && !regionId ? Promise.resolve(null) : api.reportingTable(session!.token, id, year, regionId), [session?.token, id, year, regionId, isAdmin], preview)
+  const { data: regions, error: regionsError } = useApiData(() => isAdmin && !previewSession ? api.regions(session!.token) : Promise.resolve([]), [session?.token, isAdmin, previewSession])
   const [detail, setDetail] = useState<ReportingTableDetail | null>(preview || null)
   const [notice, setNotice] = useState<{ tone: 'success' | 'error' | 'info'; message: string } | null>(null)
   const [saving, setSaving] = useState(false)
@@ -54,10 +58,17 @@ export function ReportingDetailPage() {
     } else blocker.reset()
   }, [blocker, formDirty])
 
-  if (loading && !detail) return <LoadingState label="Memuat rincian Tabel Pelaporan…" />
-  if (error || !detail) return <ErrorState message={error || 'Rincian tabel tidak tersedia.'} />
+  if (isAdmin && !previewSession && !regionId) return <>
+    <Link to="/reporting-tables" className="mb-4 inline-flex min-h-10 items-center gap-2 text-xs font-bold text-archive hover:underline"><ArrowLeft className="size-3.5" />Tabel Pelaporan</Link>
+    <Panel className="max-w-xl overflow-hidden">
+      <div className="border-b border-line-soft p-5"><h1 className="text-base font-bold">Pilih Kabupaten/Kota</h1><p className="mt-1 text-sm text-ink-muted">Rincian Nilai Indikator dan status ditampilkan untuk satu wilayah.</p></div>
+      <div className="p-5"><label htmlFor="detail-region" className="text-xs font-semibold">Kabupaten/Kota</label>{regionsError ? <p className="mt-2 text-sm text-correction">{regionsError}</p> : <Select id="detail-region" className="mt-1.5" value={regionId || ''} disabled={!regions?.length} onChange={(event) => setSearchParams((current) => { const next = new URLSearchParams(current); next.set('regionId', event.target.value); next.set('year', String(year)); return next })}><option value="" disabled>{regions?.length ? 'Pilih wilayah…' : 'Memuat wilayah…'}</option>{regions?.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</Select>}</div>
+    </Panel>
+  </>
+  const staleDetail = Boolean(detail && (detail.reportingTableId !== id || (regionId && detail.regionId !== String(regionId))))
+  if (error) return <ErrorState message={error} />
+  if (!detail || staleDetail) return <LoadingState label="Memuat rincian Tabel Pelaporan…" />
 
-  const isAdmin = session?.user.role === 'administrator'
   const editable = detail.mappingStatus === 'ready' && !isAdmin && detail.status === 'not_started'
   const requiredRows = detail.rows.filter((row) => row.kind === 'base' && row.required)
   const missing = requiredRows.filter((row) => row.notApplicable ? !row.notApplicableReason.trim() : !row.value).length
@@ -139,7 +150,7 @@ export function ReportingDetailPage() {
     if (!detail || inputMode === 'form' || worksheetBusy) return
     setSaving(true)
     try {
-      setDetail(await api.reportingTable(session!.token, detail.reportingTableId, detail.year))
+      setDetail(await api.reportingTable(session!.token, detail.reportingTableId, detail.year, Number(detail.regionId)))
       setInputMode('form')
       setNotice(null)
     } catch (cause) {
@@ -172,13 +183,14 @@ export function ReportingDetailPage() {
 
   return (
     <>
-      <Link to="/reporting-tables" className="mb-4 inline-flex min-h-10 items-center gap-2 text-xs font-bold text-archive hover:underline"><ArrowLeft className="size-3.5" />Tabel Pelaporan</Link>
+      <Link to={`/reporting-tables${isAdmin ? `?year=${year}&regionId=${detail.regionId}` : ''}`} className="mb-4 inline-flex min-h-10 items-center gap-2 text-xs font-bold text-archive hover:underline"><ArrowLeft className="size-3.5" />Tabel Pelaporan</Link>
       <div className="mb-4 flex flex-col justify-between gap-4 border-b border-line-soft pb-4 xl:flex-row xl:items-end">
         <div className="min-w-0">
           <div className="mb-2 flex flex-wrap items-center gap-2"><span className="font-mono text-xs font-bold tracking-[0.06em] text-archive">TABEL {String(detail.number).padStart(2, '0')}</span><StatusBadge status={detail.status} /></div>
           <h1 className="max-w-5xl text-balance text-lg font-bold leading-snug tracking-[-0.02em] sm:text-xl">{detail.name}</h1>
           <p className="mt-2 text-xs text-ink-muted">{detail.region} <span aria-hidden="true">·</span> Tahun Pelaporan {detail.year}</p>
         </div>
+        {isAdmin && regions?.length ? <label className="flex min-w-52 flex-col gap-1 text-[11px] font-semibold text-ink-muted">Kabupaten/Kota<Select value={detail.regionId} disabled={changingStatus || statusDialog !== null} onChange={(event) => setSearchParams((current) => { const next = new URLSearchParams(current); next.set('regionId', event.target.value); next.set('year', String(year)); return next })}>{regions.map((region) => <option key={region.id} value={region.id}>{region.name}</option>)}</Select></label> : null}
         <div className="flex flex-wrap gap-2">
           {editable && !spreadsheetView ? <Button variant="outline" onClick={save} disabled={saving || !formDirty}><Save data-icon="inline-start" />{saving ? 'Menyimpan…' : 'Simpan draft'}</Button> : null}
           {editable ? <Button onClick={() => changeStatus('complete')} disabled={missing > 0 || !detail.submissionId || formDirty || worksheetBusy || changingStatus}><CheckCircle2 data-icon="inline-start" />{changingStatus ? 'Memproses…' : 'Selesai Input'}</Button> : null}

@@ -83,6 +83,7 @@ class DashboardController extends Controller
             return [
                 'id' => $submission->reporting_table_id,
                 'submission_id' => $submission->id,
+                'region_id' => $submission->region_id,
                 'code' => $submission->reportingTable->code,
                 'name' => $submission->reportingTable->name,
                 'position' => $submission->reportingTable->position,

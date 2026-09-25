@@ -85,6 +85,7 @@ export function demoTableDetail(id: string, year: number): ReportingTableDetail 
   return {
     ...table,
     reportingTableId: table.id,
+    regionId: '1',
     submissionId: table.id,
     description: 'Rekapitulasi Nilai Indikator menurut kategori dan fasilitas pada Kabupaten/Kota untuk Tahun Pelaporan terpilih.',
     year,

@@ -174,6 +174,7 @@ class CatalogController extends Controller
 
     public function mapIndicators(Request $request, ReportingTable $reportingTable)
     {
+        abort_if($reportingTable->code === 'T02', 409, 'Tabel 2 dipetakan berdasarkan kelompok umur dari Sheet 2.');
         abort_if(Submission::where('reporting_table_id', $reportingTable->id)->exists(), 409, 'Tabel Pelaporan sudah memiliki data.');
         $data = $request->validate([
             'indicators' => ['required', 'array', 'min:1'],

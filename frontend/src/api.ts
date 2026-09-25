@@ -237,7 +237,7 @@ async function reportingContext(token: string, requestedYear: number) {
 }
 
 function tableFromSubmission(item: ApiSubmissionListItem): ReportingTable {
-  const indicatorCount = item.reporting_table.indicators.length
+  const indicatorCount = item.reporting_table.indicators.filter((indicator) => indicator.value_kind === 'base' && indicator.is_required).length
   const regionCounts = item.region_counts
   return {
     id: String(item.reporting_table.id),
@@ -252,7 +252,7 @@ function tableFromSubmission(item: ApiSubmissionListItem): ReportingTable {
       ? regionCounts.total ? Math.round((regionCounts.verified + regionCounts.completed) / regionCounts.total * 100) : 0
       : item.status === 'completed' || item.status === 'verified'
         ? 100
-        : indicatorCount ? Math.round(item.values_count / indicatorCount * 100) : 0,
+        : indicatorCount ? Math.min(100, Math.round(item.values_count / indicatorCount * 100)) : 0,
     regionCounts: regionCounts ? {
       total: regionCounts.total,
       verified: regionCounts.verified,

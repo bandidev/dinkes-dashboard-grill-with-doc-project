@@ -30,6 +30,24 @@ class IndicatorCalculatorTest extends TestCase
         $this->assertSame(100.0, $result[5]);
     }
 
+    public function test_nested_sums_keep_missing_values_and_zero_denominators_uncomputed(): void
+    {
+        $indicators = collect([
+            $this->indicator(1, 'CHILD', 'base'),
+            $this->indicator(2, 'SENIOR', 'base'),
+            $this->indicator(3, 'WORKING', 'base'),
+            $this->indicator(4, 'DEPENDENCY', 'derived', ['op' => 'percent', 'args' => [
+                ['op' => 'add', 'args' => ['CHILD', 'SENIOR']],
+                ['op' => 'add', 'args' => ['WORKING']],
+            ]], 2),
+        ]);
+        $calculator = new IndicatorCalculator;
+
+        $this->assertSame(50.0, $calculator->calculate($indicators, collect([$this->value(1, 10), $this->value(2, 5), $this->value(3, 30)]))[4]);
+        $this->assertNull($calculator->calculate($indicators, collect([$this->value(1, 10), $this->value(3, 30)]))[4]);
+        $this->assertNull($calculator->calculate($indicators, collect([$this->value(1, 10), $this->value(2, 5), $this->value(3, 0)]))[4]);
+    }
+
     private function indicator(int $id, string $code, string $kind, ?array $formula = null, int $decimalPlaces = 0): Indicator
     {
         $indicator = new Indicator([

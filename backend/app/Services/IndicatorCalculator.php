@@ -40,19 +40,37 @@ class IndicatorCalculator
             return null;
         }
 
-        $formula = $indicator->formula;
+        $result = $this->evaluateFormula($indicator->formula, $indicators, $values, $results, [...$stack, $indicator->id]);
+
+        return $result === null ? null : round($result, $indicator->decimal_places);
+    }
+
+    private function evaluateFormula(?array $formula, Collection $indicators, Collection $values, array &$results, array $stack): ?float
+    {
         if (! is_array($formula) || ! isset($formula['op'], $formula['args']) || ! is_array($formula['args'])) {
             return null;
         }
 
         $arguments = [];
         foreach ($formula['args'] as $code) {
+            if (is_array($code)) {
+                $argument = $this->evaluateFormula($code, $indicators, $values, $results, $stack);
+                if ($argument === null) {
+                    return null;
+                }
+                $arguments[] = $argument;
+
+                continue;
+            }
+            if (! is_string($code)) {
+                return null;
+            }
             $dependency = $indicators->get($code);
             if (! $dependency) {
                 return null;
             }
             if ($dependency->value_kind === 'derived') {
-                $argument = $this->evaluate($dependency, $indicators, $values, $results, [...$stack, $indicator->id]);
+                $argument = $this->evaluate($dependency, $indicators, $values, $results, $stack);
             } else {
                 $value = $values->get($dependency->id);
                 $argument = $value && ! $value->not_applicable && $value->numeric_value !== null
@@ -72,6 +90,6 @@ class IndicatorCalculator
             default => null,
         };
 
-        return $result === null ? null : round($result, $indicator->decimal_places);
+        return $result;
     }
 }

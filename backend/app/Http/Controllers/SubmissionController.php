@@ -63,7 +63,7 @@ class SubmissionController extends Controller
         $regionId = $user->role === 'operator' ? $user->region_id : $data['region_id'];
         abort_unless($regionId, 422, 'The user must be assigned to a region.');
 
-        $submissions = Submission::withCount('values')
+        $submissions = Submission::withCount(['values as values_count' => fn ($query) => $query->whereHas('indicator', fn ($indicator) => $indicator->where('is_active', true)->where('is_required', true)->where('value_kind', 'base'))])
             ->where('reporting_year_id', $data['reporting_year_id'])
             ->where('region_id', $regionId)
             ->get()

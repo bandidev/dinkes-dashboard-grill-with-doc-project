@@ -7,6 +7,7 @@ use App\Models\IndicatorValue;
 use App\Models\IndicatorValueRevision;
 use App\Models\Region;
 use App\Models\ReportingTable;
+use App\Models\ReportingYear;
 use App\Models\Submission;
 use App\Models\User;
 use App\Services\IndicatorCalculator;
@@ -95,61 +96,116 @@ class TableTwoMappingTest extends TestCase
 
     public function test_province_aggregates_current_region_values_only_when_every_region_has_data(): void
     {
-        $this->seed();
-        $table = ReportingTable::where('code', 'T02')->firstOrFail();
+        $year = ReportingYear::create(['year' => 2024, 'status' => 'open']);
+        $table = ReportingTable::create([
+            'reporting_year_id' => $year->id,
+            'code' => 'T02',
+            'name' => 'Jumlah Penduduk Menurut Kelompok Umur',
+            'mapping_status' => 'ready',
+        ]);
+        $indicatorDefinitions = [
+            ['PENDUDUK_0_4_L', 'base'],
+            ['PENDUDUK_0_4_P', 'base'],
+            ['PENDUDUK_5_9_L', 'base'],
+            ['PENDUDUK_5_9_P', 'base'],
+            ['PENDUDUK_0_4_TOTAL', 'derived', ['op' => 'add', 'args' => ['PENDUDUK_0_4_L', 'PENDUDUK_0_4_P']]],
+            ['PENDUDUK_0_4_RASIO', 'derived', ['op' => 'percent', 'args' => ['PENDUDUK_0_4_L', 'PENDUDUK_0_4_P']]],
+            ['PENDUDUK_5_9_TOTAL', 'derived', ['op' => 'add', 'args' => ['PENDUDUK_5_9_L', 'PENDUDUK_5_9_P']]],
+            ['PENDUDUK_TOTAL_L', 'derived', ['op' => 'add', 'args' => ['PENDUDUK_0_4_L', 'PENDUDUK_5_9_L']]],
+            ['PENDUDUK_TOTAL_P', 'derived', ['op' => 'add', 'args' => ['PENDUDUK_0_4_P', 'PENDUDUK_5_9_P']]],
+            ['PENDUDUK_TOTAL', 'derived', ['op' => 'add', 'args' => ['PENDUDUK_TOTAL_L', 'PENDUDUK_TOTAL_P']]],
+            ['PENDUDUK_TOTAL_RASIO', 'derived', ['op' => 'percent', 'args' => ['PENDUDUK_TOTAL_L', 'PENDUDUK_TOTAL_P']]],
+            ['ANGKA_BEBAN_TANGGUNGAN', 'derived', ['op' => 'percent', 'args' => [['op' => 'add', 'args' => ['PENDUDUK_0_4_TOTAL']], ['op' => 'add', 'args' => ['PENDUDUK_5_9_TOTAL']]]]],
+        ];
+        $indicators = collect($indicatorDefinitions)->mapWithKeys(function (array $definition, int $position) use ($table) {
+            [$code, $kind] = $definition;
+            $formula = $definition[2] ?? null;
+            $indicator = Indicator::create([
+                'reporting_table_id' => $table->id,
+                'code' => $code,
+                'name' => $code,
+                'data_type' => 'numeric',
+                'value_kind' => $kind,
+                'formula' => $formula,
+                'is_required' => $kind === 'base',
+                'decimal_places' => $code === 'ANGKA_BEBAN_TANGGUNGAN' ? 2 : (str_ends_with($code, 'RASIO') ? 1 : 0),
+                'position' => $position + 1,
+            ]);
+
+            return [$code => $indicator];
+        });
+        $regions = collect([
+            Region::create(['code' => 'TEST_A', 'name' => 'Kabupaten A']),
+            Region::create(['code' => 'TEST_B', 'name' => 'Kabupaten B']),
+        ]);
+        foreach ($regions as $index => $region) {
+            $submission = Submission::create([
+                'region_id' => $region->id,
+                'reporting_year_id' => $year->id,
+                'reporting_table_id' => $table->id,
+            ]);
+            foreach ([
+                'PENDUDUK_0_4_L' => [10, 20],
+                'PENDUDUK_0_4_P' => [12, 18],
+                'PENDUDUK_5_9_L' => [40, 50],
+                'PENDUDUK_5_9_P' => [45, 55],
+            ] as $code => $values) {
+                IndicatorValue::create([
+                    'submission_id' => $submission->id,
+                    'indicator_id' => $indicators[$code]->id,
+                    'numeric_value' => $values[$index],
+                ]);
+            }
+        }
+        $admin = User::create(['name' => 'Admin', 'email' => 'province-admin@example.com', 'password' => 'password', 'role' => 'administrator']);
+        $operator = User::create(['name' => 'Operator', 'email' => 'province-operator@example.com', 'password' => 'password', 'role' => 'operator', 'region_id' => $regions->first()->id]);
         $path = "/api/reporting-tables/{$table->id}/province";
-        Sanctum::actingAs(User::where('role', 'administrator')->firstOrFail());
-        $otherTable = ReportingTable::where('code', 'T01')->firstOrFail();
-        $this->getJson("/api/reporting-tables/{$otherTable->id}/province")->assertNotFound();
+        Sanctum::actingAs($admin);
         $table->update(['mapping_status' => 'pending']);
         $this->getJson($path)->assertNotFound();
-        $this->artisan('profile:import-catalog', [
-            'workbook' => base_path('../PROFIL-KES_2024_FINAL(hasilperbaikan).xlsx'), '--year' => 2024,
-        ])->assertSuccessful();
-        $this->artisan('profile:map-table-two', ['--year' => 2024])->assertSuccessful();
-        $table->load('indicators');
-        $id = fn (string $code) => (string) $table->indicators->firstWhere('code', $code)->id;
+        $table->update(['mapping_status' => 'ready']);
+        $id = fn (string $code) => (string) $indicators[$code]->id;
         $baseCount = IndicatorValue::count();
 
         $this->getJson($path)->assertOk()
-            ->assertJsonPath('complete_base_count', 32)
-            ->assertJsonPath('region_count', 7)
-            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_L'), 790861)
-            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_P'), 751742)
-            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL'), 1542603)
-            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_RASIO'), 105.2)
-            ->assertJsonPath('calculated_values.'.$id('ANGKA_BEBAN_TANGGUNGAN'), 45.10);
+            ->assertJsonPath('complete_base_count', 4)
+            ->assertJsonPath('region_count', 2)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_L'), 120)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_P'), 130)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL'), 250)
+            ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL_RASIO'), 92.3)
+            ->assertJsonPath('calculated_values.'.$id('ANGKA_BEBAN_TANGGUNGAN'), 31.58);
         $this->assertSame($baseCount, IndicatorValue::count());
 
-        $indicator = $table->indicators->firstWhere('code', 'PENDUDUK_0_4_L');
-        $value = IndicatorValue::where('indicator_id', $indicator->id)->firstOrFail();
-        $original = (float) $value->numeric_value;
+        $indicator = $indicators['PENDUDUK_0_4_L'];
+        $value = IndicatorValue::where('submission_id', Submission::where('region_id', $regions->first()->id)->value('id'))
+            ->where('indicator_id', $indicator->id)->firstOrFail();
         $before = $this->getJson($path)->json('values.'.$id('PENDUDUK_0_4_L'));
         $value->update(['numeric_value' => 0]);
         $this->getJson($path)->assertOk()
-            ->assertJsonPath('complete_base_count', 32)
-            ->assertJsonPath('values.'.$id('PENDUDUK_0_4_L'), (int) ($before - $original));
+            ->assertJsonPath('complete_base_count', 4)
+            ->assertJsonPath('values.'.$id('PENDUDUK_0_4_L'), $before - 10);
         $value->update(['numeric_value' => null]);
         $this->getJson($path)->assertOk()
-            ->assertJsonPath('complete_base_count', 31)
+            ->assertJsonPath('complete_base_count', 3)
             ->assertJsonMissingPath('values.'.$id('PENDUDUK_0_4_L'))
             ->assertJsonPath('calculated_values.'.$id('PENDUDUK_0_4_TOTAL'), null)
             ->assertJsonPath('calculated_values.'.$id('PENDUDUK_TOTAL'), null)
             ->assertJsonPath('calculated_values.'.$id('ANGKA_BEBAN_TANGGUNGAN'), null);
         $value->update(['not_applicable' => true, 'numeric_value' => 20]);
-        $this->getJson($path)->assertOk()->assertJsonPath('complete_base_count', 31);
+        $this->getJson($path)->assertOk()->assertJsonPath('complete_base_count', 3);
 
         $value->update(['not_applicable' => false, 'numeric_value' => 0]);
-        $female = $table->indicators->firstWhere('code', 'PENDUDUK_0_4_P');
-        IndicatorValue::where('indicator_id', $female->id)->update(['numeric_value' => 0]);
+        IndicatorValue::whereIn('submission_id', Submission::where('reporting_table_id', $table->id)->pluck('id'))
+            ->where('indicator_id', $indicators['PENDUDUK_0_4_P']->id)->update(['numeric_value' => 0]);
         $this->getJson($path)->assertOk()
-            ->assertJsonPath('complete_base_count', 32)
+            ->assertJsonPath('complete_base_count', 4)
             ->assertJsonPath('calculated_values.'.$id('PENDUDUK_0_4_RASIO'), null);
 
         $value->delete();
-        $this->getJson($path)->assertOk()->assertJsonPath('complete_base_count', 31);
+        $this->getJson($path)->assertOk()->assertJsonPath('complete_base_count', 3);
 
-        Sanctum::actingAs(User::where('role', 'operator')->firstOrFail());
+        Sanctum::actingAs($operator);
         $this->getJson($path)->assertForbidden();
     }
 }

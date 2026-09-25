@@ -237,7 +237,7 @@ class HealthProfileApiTest extends TestCase
     public function test_partial_draft_save_preserves_other_indicator_not_applicable_state(): void
     {
         [$operator, , $table, $indicator] = $this->scenario();
-        $table->update(['code' => 'T03']);
+        $table->update(['code' => 'T04']);
         $other = Indicator::create([
             'reporting_table_id' => $table->id,
             'code' => 'I02',
@@ -269,10 +269,10 @@ class HealthProfileApiTest extends TestCase
         ]);
     }
 
-    public function test_tables_one_and_two_require_explicit_zero_and_reject_new_not_applicable_values(): void
+    public function test_numeric_tables_require_explicit_zero_and_reject_new_not_applicable_values(): void
     {
-        foreach (['T01', 'T02'] as $code) {
-            [$operator, , $table, $indicator] = $this->scenario($code === 'T02' ? '2' : '');
+        foreach (['T01', 'T02', 'T03'] as $index => $code) {
+            [$operator, , $table, $indicator] = $this->scenario($index === 0 ? '' : (string) $index);
             $table->update(['code' => $code]);
             Sanctum::actingAs($operator);
 
@@ -300,10 +300,10 @@ class HealthProfileApiTest extends TestCase
         }
     }
 
-    public function test_partial_draft_save_converts_historical_not_applicable_to_zero_without_filling_missing_values(): void
+    public function test_partial_draft_save_converts_historical_not_applicable_for_numeric_tables_without_filling_missing_values(): void
     {
-        foreach (['T01', 'T02'] as $code) {
-            [$operator, , $table, $indicator] = $this->scenario($code === 'T02' ? '2' : '');
+        foreach (['T01', 'T02', 'T03'] as $index => $code) {
+            [$operator, , $table, $indicator] = $this->scenario($index === 0 ? '' : (string) ($index + 2));
             $table->update(['code' => $code]);
             $legacy = Indicator::create(['reporting_table_id' => $table->id, 'code' => 'LEGACY', 'name' => 'Data lama', 'data_type' => 'numeric']);
             $missing = Indicator::create(['reporting_table_id' => $table->id, 'code' => 'MISSING', 'name' => 'Belum diisi', 'data_type' => 'numeric']);
@@ -387,7 +387,7 @@ class HealthProfileApiTest extends TestCase
     {
         $regionA = Region::create(['code' => 'A'.$suffix, 'name' => 'Kabupaten A'.$suffix]);
         $regionB = Region::create(['code' => 'B'.$suffix, 'name' => 'Kabupaten B'.$suffix]);
-        $year = ReportingYear::create(['year' => $suffix ? 2025 : 2024, 'status' => 'open']);
+        $year = ReportingYear::create(['year' => 2024 + (int) $suffix, 'status' => 'open']);
         $table = ReportingTable::create([
             'reporting_year_id' => $year->id,
             'code' => 'T01',

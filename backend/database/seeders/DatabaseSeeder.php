@@ -74,8 +74,9 @@ class DatabaseSeeder extends Seeder
             ],
             [
                 'code' => 'T03',
-                'name' => 'Kesehatan Ibu dan Anak',
-                'description' => 'Indikator ringkas pelayanan kesehatan ibu dan anak.',
+                'name' => 'Penduduk 15 Tahun ke Atas Menurut Melek Huruf dan Ijazah',
+                'description' => 'Penduduk 15 tahun ke atas, melek huruf, dan ijazah tertinggi menurut jenis kelamin.',
+                'mapping_status' => 'pending',
                 'indicators' => [
                     ['code' => 'PERSALINAN_NAKES', 'name' => 'Persalinan Ditolong Tenaga Kesehatan', 'data_type' => 'numeric', 'unit' => 'orang'],
                     ['code' => 'CATATAN_KIA', 'name' => 'Catatan Kesehatan Ibu dan Anak', 'data_type' => 'text', 'is_required' => false],
@@ -86,10 +87,11 @@ class DatabaseSeeder extends Seeder
         foreach ($tables as $tablePosition => $tableData) {
             $indicators = $tableData['indicators'];
             unset($tableData['indicators']);
-            $table = ReportingTable::updateOrCreate(
-                ['reporting_year_id' => $year->id, 'code' => $tableData['code']],
-                [...$tableData, 'position' => $tablePosition + 1],
-            );
+            $table = ReportingTable::firstOrNew(['reporting_year_id' => $year->id, 'code' => $tableData['code']]);
+            if ($tableData['code'] === 'T03' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'PENDUDUK_15_PLUS_L')->exists()) {
+                continue;
+            }
+            $table->fill([...$tableData, 'position' => $tablePosition + 1])->save();
 
             foreach ($indicators as $indicatorPosition => $indicator) {
                 Indicator::updateOrCreate(

@@ -51,7 +51,7 @@ class SubmissionController extends Controller
 
     public function province(ReportingTable $reportingTable, IndicatorCalculator $calculator)
     {
-        abort_unless($reportingTable->code === 'T02' && $reportingTable->mapping_status === 'ready', 404);
+        abort_unless(in_array($reportingTable->code, ['T02', 'T03'], true) && $reportingTable->mapping_status === 'ready', 404);
         $reportingTable->load('indicators');
         $regions = Region::pluck('id');
         $submissions = Submission::with('values')
@@ -100,7 +100,7 @@ class SubmissionController extends Controller
         $regionId = $user->role === 'operator' ? $user->region_id : $data['region_id'];
         abort_unless($regionId, 422, 'The user must be assigned to a region.');
 
-        $submissions = Submission::withCount(['values as values_count' => fn ($query) => $query->whereHas('indicator', fn ($indicator) => $indicator->where('is_active', true)->where('is_required', true)->where('value_kind', 'base'))->where(fn ($value) => $value->whereNotNull('numeric_value')->orWhereNotNull('text_value')->orWhereNotNull('date_value')->orWhere(fn ($na) => $na->where('not_applicable', true)->whereHas('indicator', fn ($indicator) => $indicator->whereNotIn('reporting_table_id', ReportingTable::whereIn('code', ['T01', 'T02'])->select('id')))))])
+        $submissions = Submission::withCount(['values as values_count' => fn ($query) => $query->whereHas('indicator', fn ($indicator) => $indicator->where('is_active', true)->where('is_required', true)->where('value_kind', 'base'))->where(fn ($value) => $value->whereNotNull('numeric_value')->orWhereNotNull('text_value')->orWhereNotNull('date_value')->orWhere(fn ($na) => $na->where('not_applicable', true)->whereHas('indicator', fn ($indicator) => $indicator->whereNotIn('reporting_table_id', ReportingTable::whereIn('code', ['T01', 'T02', 'T03'])->select('id')))))])
             ->where('reporting_year_id', $data['reporting_year_id'])
             ->where('region_id', $regionId)
             ->get()
@@ -251,7 +251,7 @@ class SubmissionController extends Controller
                     'submission_id' => $submission->id,
                     'indicator_id' => $indicator->id,
                 ]);
-                if (in_array($table->code, ['T01', 'T02'], true) && $value->not_applicable && blank($item['value'] ?? null)) {
+                if (in_array($table->code, ['T01', 'T02', 'T03'], true) && $value->not_applicable && blank($item['value'] ?? null)) {
                     $item['value'] = 0;
                 }
                 $attributes = $this->valueAttributes($item, $indicator);
@@ -270,7 +270,7 @@ class SubmissionController extends Controller
                 }
             }
 
-            if (in_array($table->code, ['T01', 'T02'], true)) {
+            if (in_array($table->code, ['T01', 'T02', 'T03'], true)) {
                 $submitted = collect($data['values'])->pluck('indicator_id');
                 $legacyValues = IndicatorValue::where('submission_id', $submission->id)
                     ->where('not_applicable', true)
@@ -403,8 +403,8 @@ class SubmissionController extends Controller
                     }
                 }],
                 'not_applicable' => [function ($attribute, $value, $fail) use ($item, $table) {
-                    if (in_array($table->code, ['T01', 'T02'], true) && ($item['not_applicable'] ?? false)) {
-                        $fail('Tidak Berlaku tidak tersedia untuk Tabel 1 dan 2. Isi 0 jika nilainya nol.');
+                    if (in_array($table->code, ['T01', 'T02', 'T03'], true) && ($item['not_applicable'] ?? false)) {
+                        $fail('Tidak Berlaku tidak tersedia untuk Tabel 1, 2, dan 3. Isi 0 jika nilainya nol.');
                     }
                 }],
             ], [], [
@@ -461,7 +461,7 @@ class SubmissionController extends Controller
             ->filter(function (Indicator $indicator) use ($values, $submission) {
                 $value = $values->get($indicator->id);
 
-                return ! $value || (in_array($submission->reportingTable->code, ['T01', 'T02'], true) && $value->not_applicable)
+                return ! $value || (in_array($submission->reportingTable->code, ['T01', 'T02', 'T03'], true) && $value->not_applicable)
                     || ($value->not_applicable
                     ? blank($value->not_applicable_reason)
                     : blank($value->{$indicator->data_type.'_value'}));

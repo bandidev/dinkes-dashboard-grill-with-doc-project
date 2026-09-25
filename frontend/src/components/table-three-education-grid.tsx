@@ -27,7 +27,7 @@ export function TableThreeEducationGrid({ rows, editable, dirtyRows, province, r
 
   function cell(code: string, label: string, decimals: number, unavailableSources: string[], shaded = false) {
     const row = byCode.get(code)
-    if (shaded) return <td className="border-l border-line bg-[#858585] px-2 py-2" aria-label="Tidak berlaku" />
+    if (shaded) return <td className="border-l border-line bg-paper-inset px-2 py-2 text-center text-ink-faint" aria-label="Tidak berlaku">—</td>
     if (!row) return <td className="border-l border-line px-2 py-2 text-ink-faint">—</td>
     const value = row.value.trim()
     if (row.kind === 'base' && editable) {

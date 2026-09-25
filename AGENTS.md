@@ -2,7 +2,7 @@
 
 ## Task Completion
 
-- When a task is complete and its relevant checks pass, commit the task's changes and push the current branch to its configured remote.
+- After relevant checks pass, summarize the changes and wait for the user's explicit approval before committing or pushing. Never commit or push before approval.
 - Stage only files changed for the completed task. Leave unrelated or pre-existing worktree changes untouched.
 - If commit or push cannot complete, report the exact blocker instead of claiming the task is fully complete.
 

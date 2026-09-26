@@ -14,3 +14,17 @@
 
 - Before completing work on a reporting table, run its mapping/import command against the database used by the application and confirm the table is ready there; code changes alone do not update an existing database.
 - Keep tests focused on the normal input flow: operators fill every required indicator and enter `0` when its value is not known. Add longer edge-case scenarios only when a stated requirement or reported defect calls for them.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues for this repository. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the five canonical triage labels. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: read the root `CONTEXT.md` and relevant ADRs under `docs/adr/`. See `docs/agents/domain.md`.

@@ -2,7 +2,7 @@
 
 ## Task Completion
 
-- After relevant checks pass, summarize the changes and wait for the user's explicit approval before committing or pushing. Never commit or push before approval.
+- After all relevant automated tests and required manual verification pass, commit and push the completed task without waiting for separate approval.
 - Stage only files changed for the completed task. Leave unrelated or pre-existing worktree changes untouched.
 - If commit or push cannot complete, report the exact blocker instead of claiming the task is fully complete.
 

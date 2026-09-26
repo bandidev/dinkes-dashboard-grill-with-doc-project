@@ -9,6 +9,7 @@ use App\Models\Region;
 use App\Models\ReportingTable;
 use App\Models\Submission;
 use App\Models\SubmissionEvent;
+use App\Models\TableFiveProvinceDenominator;
 use App\Services\IndicatorCalculator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -51,11 +52,11 @@ class SubmissionController extends Controller
 
     public function province(ReportingTable $reportingTable, IndicatorCalculator $calculator)
     {
-        abort_unless(in_array($reportingTable->code, ['T02', 'T03', 'T04'], true) && $reportingTable->mapping_status === 'ready', 404);
+        abort_unless(in_array($reportingTable->code, ['T02', 'T03', 'T04', 'T05'], true) && $reportingTable->mapping_status === 'ready', 404);
         $reportingTable->load('indicators');
         $regions = Region::pluck('id');
         $baseCount = $reportingTable->indicators->where('value_kind', 'base')->count();
-        $isFacilityTable = $reportingTable->code === 'T04';
+        $isFacilityTable = in_array($reportingTable->code, ['T04', 'T05'], true);
         $submissions = Submission::with('values')
             ->where('reporting_table_id', $reportingTable->id)
             ->whereIn('region_id', $regions)
@@ -78,7 +79,9 @@ class SubmissionController extends Controller
 
                     continue 2;
                 }
-                $sum += (float) $value->numeric_value;
+                $sum += $reportingTable->code === 'T05'
+                    ? (int) $value->numeric_value
+                    : (float) $value->numeric_value;
             }
             if ($isFacilityTable && $sum === null) {
                 continue;
@@ -86,14 +89,87 @@ class SubmissionController extends Controller
             $values->push(new IndicatorValue(['indicator_id' => $indicator->id, 'numeric_value' => $sum]));
         }
 
-        return [
+        $response = [
             'table' => $reportingTable,
             'values' => $values->pluck('numeric_value', 'indicator_id'),
             'calculated_values' => $calculator->calculate($reportingTable->indicators, $values),
             'complete_base_count' => $values->count(),
             'base_count' => $baseCount,
             'region_count' => $regions->count(),
+            'complete_region_count' => $reportingTable->code === 'T05' ? $submissions->whereIn('status', ['completed', 'verified'])->count() : 0,
         ];
+
+        if ($reportingTable->code === 'T05') {
+            $denominator = TableFiveProvinceDenominator::where('reporting_year_id', $reportingTable->reporting_year_id)->first()
+                ?? new TableFiveProvinceDenominator(['reporting_year_id' => $reportingTable->reporting_year_id]);
+            $denominatorValues = [
+                'outpatient_l' => $denominator->outpatient_l,
+                'outpatient_p' => $denominator->outpatient_p,
+                'inpatient_l' => $denominator->inpatient_l,
+                'inpatient_p' => $denominator->inpatient_p,
+            ];
+            $denominatorValues['outpatient_total'] = $denominatorValues['outpatient_l'] !== null && $denominatorValues['outpatient_p'] !== null
+                ? $denominatorValues['outpatient_l'] + $denominatorValues['outpatient_p']
+                : null;
+            $denominatorValues['inpatient_total'] = $denominatorValues['inpatient_l'] !== null && $denominatorValues['inpatient_p'] !== null
+                ? $denominatorValues['inpatient_l'] + $denominatorValues['inpatient_p']
+                : null;
+            $mainTotal = [];
+            foreach ([
+                'outpatient_l' => 'RAWAT_JALAN_L',
+                'outpatient_p' => 'RAWAT_JALAN_P',
+                'inpatient_l' => 'RAWAT_INAP_L',
+                'inpatient_p' => 'RAWAT_INAP_P',
+            ] as $key => $measure) {
+                $indicator = $reportingTable->indicators->firstWhere('code', "KUNJUNGAN_TOTAL_UTAMA_{$measure}");
+                $mainTotal[$key] = $indicator ? $response['calculated_values'][$indicator->id] ?? null : null;
+            }
+            foreach (['outpatient_total' => 'RAWAT_JALAN_LP', 'inpatient_total' => 'RAWAT_INAP_LP'] as $key => $measure) {
+                $indicator = $reportingTable->indicators->firstWhere('code', "KUNJUNGAN_TOTAL_UTAMA_{$measure}");
+                $mainTotal[$key] = $indicator ? $response['calculated_values'][$indicator->id] ?? null : null;
+            }
+            $response['province_denominators'] = $denominatorValues;
+            $response['coverage_values'] = collect($mainTotal)->map(fn ($numerator, $key) => $numerator === null || ! ($denominatorValues[$key] ?? null)
+                    ? null
+                    : round($numerator / $denominatorValues[$key] * 100, 2)
+            )->all();
+        }
+
+        return $response;
+    }
+
+    public function updateTableFiveProvinceDenominators(Request $request, ReportingTable $reportingTable)
+    {
+        abort_unless($reportingTable->code === 'T05' && $reportingTable->mapping_status === 'ready', 404);
+        $data = $request->validate([
+            'outpatient_l' => ['present', 'nullable', 'integer', 'min:0'],
+            'outpatient_p' => ['present', 'nullable', 'integer', 'min:0'],
+            'inpatient_l' => ['present', 'nullable', 'integer', 'min:0'],
+            'inpatient_p' => ['present', 'nullable', 'integer', 'min:0'],
+        ]);
+        abort_unless($reportingTable->reportingYear()->value('status') === 'open', 409, 'The reporting year is closed.');
+        $denominator = DB::transaction(function () use ($request, $reportingTable, $data) {
+            $denominator = TableFiveProvinceDenominator::where('reporting_year_id', $reportingTable->reporting_year_id)->lockForUpdate()->first()
+                ?? TableFiveProvinceDenominator::create(['reporting_year_id' => $reportingTable->reporting_year_id]);
+            $oldValues = Arr::only($denominator->getAttributes(), array_keys($data));
+            $denominator->fill([...$data, 'updated_by' => $request->user()->id]);
+            if ($denominator->isDirty(array_keys($data))) {
+                $denominator->save();
+                DB::table('table_five_province_denominator_revisions')->insert([
+                    'denominator_id' => $denominator->id,
+                    'user_id' => $request->user()->id,
+                    'old_values' => json_encode($oldValues),
+                    'new_values' => json_encode($data),
+                    'reason' => 'Pembaruan Nilai Dasar penyebut Provinsi Tabel Pelaporan 5.',
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ]);
+            }
+
+            return $denominator->refresh();
+        });
+
+        return $denominator;
     }
 
     public function index(Request $request)
@@ -110,7 +186,7 @@ class SubmissionController extends Controller
         $regionId = $user->role === 'operator' ? $user->region_id : $data['region_id'];
         abort_unless($regionId, 422, 'The user must be assigned to a region.');
 
-        $submissions = Submission::withCount(['values as values_count' => fn ($query) => $query->whereHas('indicator', fn ($indicator) => $indicator->where('is_active', true)->where('is_required', true)->where('value_kind', 'base'))->where(fn ($value) => $value->whereNotNull('numeric_value')->orWhereNotNull('text_value')->orWhereNotNull('date_value')->orWhere(fn ($na) => $na->where('not_applicable', true)->whereHas('indicator', fn ($indicator) => $indicator->whereNotIn('reporting_table_id', ReportingTable::whereIn('code', ['T01', 'T02', 'T03', 'T04'])->select('id')))))])
+        $submissions = Submission::withCount(['values as values_count' => fn ($query) => $query->whereHas('indicator', fn ($indicator) => $indicator->where('is_active', true)->where('is_required', true)->where('value_kind', 'base'))->where(fn ($value) => $value->whereNotNull('numeric_value')->orWhereNotNull('text_value')->orWhereNotNull('date_value')->orWhere(fn ($na) => $na->where('not_applicable', true)->whereHas('indicator', fn ($indicator) => $indicator->whereNotIn('reporting_table_id', ReportingTable::whereIn('code', ['T01', 'T02', 'T03', 'T04', 'T05'])->select('id')))))])
             ->where('reporting_year_id', $data['reporting_year_id'])
             ->where('region_id', $regionId)
             ->get()
@@ -261,7 +337,7 @@ class SubmissionController extends Controller
                     'submission_id' => $submission->id,
                     'indicator_id' => $indicator->id,
                 ]);
-                if (in_array($table->code, ['T01', 'T02', 'T03', 'T04'], true) && $value->not_applicable && blank($item['value'] ?? null)) {
+                if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true) && $value->not_applicable && blank($item['value'] ?? null)) {
                     $item['value'] = 0;
                 }
                 $attributes = $this->valueAttributes($item, $indicator);
@@ -280,7 +356,7 @@ class SubmissionController extends Controller
                 }
             }
 
-            if (in_array($table->code, ['T01', 'T02', 'T03', 'T04'], true)) {
+            if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true)) {
                 $submitted = collect($data['values'])->pluck('indicator_id');
                 $legacyValues = IndicatorValue::where('submission_id', $submission->id)
                     ->where('not_applicable', true)
@@ -403,7 +479,7 @@ class SubmissionController extends Controller
                     }
                 }],
                 'value' => $indicator ? match ($indicator->data_type) {
-                    'numeric' => ['nullable', 'numeric'],
+                    'numeric' => $table->code === 'T05' ? ['nullable', 'integer', 'min:0'] : ['nullable', 'numeric'],
                     'date' => ['nullable', 'date_format:Y-m-d'],
                     default => ['nullable', 'string'],
                 } : ['nullable'],
@@ -413,7 +489,7 @@ class SubmissionController extends Controller
                     }
                 }],
                 'not_applicable' => [function ($attribute, $value, $fail) use ($item, $table) {
-                    if (in_array($table->code, ['T01', 'T02', 'T03', 'T04'], true) && ($item['not_applicable'] ?? false)) {
+                    if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true) && ($item['not_applicable'] ?? false)) {
                         $fail('Tidak Berlaku tidak tersedia untuk tabel numerik ini. Isi 0 jika nilainya nol.');
                     }
                 }],
@@ -428,13 +504,18 @@ class SubmissionController extends Controller
     {
         $indicators = $table->indicators->keyBy('id');
 
-        return array_map(function (array $item) use ($indicators) {
+        return array_map(function (array $item) use ($indicators, $table) {
             $indicator = $indicators->get($item['indicator_id']);
             if ($indicator?->data_type !== 'numeric' || ! is_string($item['value'] ?? null)) {
                 return $item;
             }
 
             $value = trim($item['value']);
+            if ($table->code === 'T05') {
+                $item['value'] = $value;
+
+                return $item;
+            }
             if (str_contains($value, ',')) {
                 $value = str_replace(['.', ','], ['', '.'], $value);
             }
@@ -471,7 +552,7 @@ class SubmissionController extends Controller
             ->filter(function (Indicator $indicator) use ($values, $submission) {
                 $value = $values->get($indicator->id);
 
-                return ! $value || (in_array($submission->reportingTable->code, ['T01', 'T02', 'T03', 'T04'], true) && $value->not_applicable)
+                return ! $value || (in_array($submission->reportingTable->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true) && $value->not_applicable)
                     || ($value->not_applicable
                     ? blank($value->not_applicable_reason)
                     : blank($value->{$indicator->data_type.'_value'}));

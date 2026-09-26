@@ -77,6 +77,8 @@ export type ReportingTableDetail = ReportingTable & {
   region: string
   rows: IndicatorRow[]
   headerCandidates: string[]
+  provinceDenominators?: { outpatient_l: string; outpatient_p: string; inpatient_l: string; inpatient_p: string; outpatient_total?: string; inpatient_total?: string }
+  coverageValues?: Record<string, number | null>
 }
 
 export type WorksheetRow = {
@@ -172,6 +174,9 @@ type ApiProvince = {
   complete_base_count: number
   base_count: number
   region_count: number
+  complete_region_count?: number
+  province_denominators?: { outpatient_l: number | null; outpatient_p: number | null; outpatient_total: number | null; inpatient_l: number | null; inpatient_p: number | null; inpatient_total: number | null }
+  coverage_values?: Record<string, number | null>
 }
 
 const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:8000/api').replace(/\/$/, '')
@@ -378,7 +383,7 @@ export const api = {
   async provinceTable(token: string, id: string, year: number): Promise<ReportingTableDetail | null> {
     const { reportingYear } = await reportingContext(token, year)
     const item = (await submissionList(token, reportingYear.id)).find((candidate) => String(candidate.reporting_table.id) === id)
-    if (!item || !['T02', 'T03', 'T04'].includes(item.reporting_table.code)) return null
+    if (!item || !['T02', 'T03', 'T04', 'T05'].includes(item.reporting_table.code)) return null
     const table = item.reporting_table
     const province = table.mapping_status === 'ready'
       ? await request<ApiProvince>(`/reporting-tables/${id}/province`, {}, token)
@@ -391,7 +396,9 @@ export const api = {
       description: table.description || 'Rekap Provinsi Kepulauan Bangka Belitung.',
       year: reportingYear.year,
       region: 'Provinsi Kepulauan Bangka Belitung',
-      completion: province?.base_count ? Math.round(province.complete_base_count / province.base_count * 100) : 0,
+      completion: table.code === 'T05'
+        ? province?.region_count ? Math.round((province.complete_region_count || 0) / province.region_count * 100) : 0
+        : province?.base_count ? Math.round(province.complete_base_count / province.base_count * 100) : 0,
       rows: (province?.table.indicators || []).map((indicator) => ({
         id: String(indicator.id), code: indicator.code, name: indicator.name,
         category: indicator.categories ? Object.values(indicator.categories).join(' • ') : '',
@@ -401,8 +408,26 @@ export const api = {
         kind: indicator.value_kind, dataType: indicator.data_type, required: indicator.is_required,
         notApplicable: false, notApplicableReason: '',
       })),
+      provinceDenominators: province?.province_denominators ? {
+        outpatient_l: province.province_denominators.outpatient_l === null ? '' : String(province.province_denominators.outpatient_l),
+        outpatient_p: province.province_denominators.outpatient_p === null ? '' : String(province.province_denominators.outpatient_p),
+        inpatient_l: province.province_denominators.inpatient_l === null ? '' : String(province.province_denominators.inpatient_l),
+        inpatient_p: province.province_denominators.inpatient_p === null ? '' : String(province.province_denominators.inpatient_p),
+        outpatient_total: province.province_denominators.outpatient_total === null ? '' : String(province.province_denominators.outpatient_total),
+        inpatient_total: province.province_denominators.inpatient_total === null ? '' : String(province.province_denominators.inpatient_total),
+      } : undefined,
+      coverageValues: province?.coverage_values,
       headerCandidates: [],
     }
+  },
+  async saveTableFiveProvinceDenominators(token: string, detail: ReportingTableDetail) {
+    await request(`/reporting-tables/${detail.reportingTableId}/province-denominators`, {
+      method: 'PUT',
+      body: JSON.stringify(Object.fromEntries(Object.entries(detail.provinceDenominators || {}).map(([key, value]) => [key, value === '' ? null : value]))),
+    }, token)
+    const updated = await api.provinceTable(token, detail.reportingTableId, detail.year)
+    if (!updated) throw new ApiError('Rekap Provinsi Tabel Pelaporan tidak tersedia.', 404)
+    return updated
   },
   async tableOneWorksheet(token: string, reportingTableId: string): Promise<TableOneWorksheet> {
     const payload = await request<ApiWorksheet>(`/reporting-tables/${reportingTableId}/worksheet`, {}, token)
@@ -471,9 +496,9 @@ export const api = {
         reporting_table_id: Number(detail.reportingTableId),
         version: detail.version,
         values: detail.rows.filter((row) => row.kind === 'base').map((row) => ({
-          indicator_id: Number(row.id), value: ['T01', 'T02', 'T03', 'T04'].includes(detail.group) && row.notApplicable && !row.value.trim() ? 0 : row.value || null,
-          not_applicable: ['T01', 'T02', 'T03', 'T04'].includes(detail.group) ? false : row.notApplicable,
-          not_applicable_reason: ['T01', 'T02', 'T03', 'T04'].includes(detail.group) ? null : row.notApplicable ? row.notApplicableReason : null,
+          indicator_id: Number(row.id), value: ['T01', 'T02', 'T03', 'T04', 'T05'].includes(detail.group) && row.notApplicable && !row.value.trim() ? 0 : row.value || null,
+          not_applicable: ['T01', 'T02', 'T03', 'T04', 'T05'].includes(detail.group) ? false : row.notApplicable,
+          not_applicable_reason: ['T01', 'T02', 'T03', 'T04', 'T05'].includes(detail.group) ? null : row.notApplicable ? row.notApplicableReason : null,
         })),
       }),
     }, token)

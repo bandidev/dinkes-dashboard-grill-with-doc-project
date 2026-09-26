@@ -22,7 +22,7 @@ export function TableSixEmergencyGrid({ rows, editable, dirtyRows, province, reg
       if (row.kind === 'base') return province ? 'Belum lengkap' : '—'
       if (province && (!denominator?.value.trim() || !numerator?.value.trim())) return 'Belum lengkap'
       if (!province && (!denominator?.value.trim() || !numerator?.value.trim())) return '—'
-      if (denominator?.value === '0') return 'Tidak Dapat Dihitung'
+      if (denominator?.value === '0') return '—'
       return province ? 'Belum lengkap' : 'Tidak Dapat Dihitung'
     }
     const value = Number(row.value.replace(',', '.'))

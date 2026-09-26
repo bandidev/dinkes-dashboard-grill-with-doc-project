@@ -102,6 +102,16 @@ class DatabaseSeeder extends Seeder
                     ['code' => 'KUNJUNGAN_PENDING', 'name' => 'Jalankan pemetaan khusus Sheet 5', 'data_type' => 'numeric', 'unit' => 'kunjungan'],
                 ],
             ],
+            [
+                'code' => 'T06',
+                'name' => 'Persentase Rumah Sakit dengan Kemampuan Pelayanan Gawat Darurat Level I',
+                'description' => 'Jumlah rumah sakit umum dan khusus serta kemampuan pelayanan Gadar Level I.',
+                'source_sheet' => '6',
+                'mapping_status' => 'pending',
+                'indicators' => [
+                    ['code' => 'GADAR_PENDING', 'name' => 'Jalankan pemetaan khusus Sheet 6', 'data_type' => 'numeric', 'unit' => 'rumah sakit'],
+                ],
+            ],
         ];
 
         foreach ($tables as $tablePosition => $tableData) {
@@ -110,7 +120,8 @@ class DatabaseSeeder extends Seeder
             $table = ReportingTable::firstOrNew(['reporting_year_id' => $year->id, 'code' => $tableData['code']]);
             if (($tableData['code'] === 'T03' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'PENDUDUK_15_PLUS_L')->exists())
                 || ($tableData['code'] === 'T04' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'FASILITAS_RUMAH_SAKIT_UMUM_KEMENKES')->exists())
-                || ($tableData['code'] === 'T05' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'KUNJUNGAN_PUSKESMAS_RAWAT_JALAN_L')->exists())) {
+                || ($tableData['code'] === 'T05' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'KUNJUNGAN_PUSKESMAS_RAWAT_JALAN_L')->exists())
+                || ($tableData['code'] === 'T06' && $table->exists && $table->mapping_status === 'ready' && $table->indicators()->where('code', 'RS_UMUM_JUMLAH')->exists())) {
                 continue;
             }
             $table->fill([...$tableData, 'position' => $tablePosition + 1])->save();

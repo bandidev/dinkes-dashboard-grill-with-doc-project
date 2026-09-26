@@ -15,6 +15,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 
 class SubmissionController extends Controller
 {
@@ -52,11 +53,13 @@ class SubmissionController extends Controller
 
     public function province(ReportingTable $reportingTable, IndicatorCalculator $calculator)
     {
-        abort_unless(in_array($reportingTable->code, ['T02', 'T03', 'T04', 'T05'], true) && $reportingTable->mapping_status === 'ready', 404);
+        abort_unless(in_array($reportingTable->code, ['T02', 'T03', 'T04', 'T05', 'T06'], true) && $reportingTable->mapping_status === 'ready', 404);
         $reportingTable->load('indicators');
-        $regions = Region::pluck('id');
+        $regions = ($reportingTable->code === 'T06'
+            ? Region::whereIn('code', ['BANGKA', 'BELITUNG', 'BANGKA_BARAT', 'BANGKA_TENGAH', 'BANGKA_SELATAN', 'BELITUNG_TIMUR', 'PANGKALPINANG'])
+            : Region::query())->pluck('id');
         $baseCount = $reportingTable->indicators->where('value_kind', 'base')->count();
-        $isFacilityTable = in_array($reportingTable->code, ['T04', 'T05'], true);
+        $isFacilityTable = in_array($reportingTable->code, ['T04', 'T05', 'T06'], true);
         $submissions = Submission::with('values')
             ->where('reporting_table_id', $reportingTable->id)
             ->whereIn('region_id', $regions)
@@ -65,7 +68,7 @@ class SubmissionController extends Controller
         $regionValues = $submissions->map(fn (Submission $submission) => $submission->values->keyBy('indicator_id'));
         $values = collect();
         foreach ($reportingTable->indicators->where('value_kind', 'base') as $indicator) {
-            if ($regions->isEmpty()) {
+            if ($regions->isEmpty() || ($reportingTable->code === 'T06' && $regions->count() !== 7)) {
                 continue;
             }
             $sum = 0;
@@ -79,7 +82,7 @@ class SubmissionController extends Controller
 
                     continue 2;
                 }
-                $sum += $reportingTable->code === 'T05'
+                $sum += in_array($reportingTable->code, ['T05', 'T06'], true)
                     ? (int) $value->numeric_value
                     : (float) $value->numeric_value;
             }
@@ -96,7 +99,7 @@ class SubmissionController extends Controller
             'complete_base_count' => $values->count(),
             'base_count' => $baseCount,
             'region_count' => $regions->count(),
-            'complete_region_count' => $reportingTable->code === 'T05' ? $submissions->whereIn('status', ['completed', 'verified'])->count() : 0,
+            'complete_region_count' => in_array($reportingTable->code, ['T05', 'T06'], true) ? $submissions->whereIn('status', ['completed', 'verified'])->count() : 0,
         ];
 
         if ($reportingTable->code === 'T05') {
@@ -186,7 +189,7 @@ class SubmissionController extends Controller
         $regionId = $user->role === 'operator' ? $user->region_id : $data['region_id'];
         abort_unless($regionId, 422, 'The user must be assigned to a region.');
 
-        $submissions = Submission::withCount(['values as values_count' => fn ($query) => $query->whereHas('indicator', fn ($indicator) => $indicator->where('is_active', true)->where('is_required', true)->where('value_kind', 'base'))->where(fn ($value) => $value->whereNotNull('numeric_value')->orWhereNotNull('text_value')->orWhereNotNull('date_value')->orWhere(fn ($na) => $na->where('not_applicable', true)->whereHas('indicator', fn ($indicator) => $indicator->whereNotIn('reporting_table_id', ReportingTable::whereIn('code', ['T01', 'T02', 'T03', 'T04', 'T05'])->select('id')))))])
+        $submissions = Submission::withCount(['values as values_count' => fn ($query) => $query->whereHas('indicator', fn ($indicator) => $indicator->where('is_active', true)->where('is_required', true)->where('value_kind', 'base'))->where(fn ($value) => $value->whereNotNull('numeric_value')->orWhereNotNull('text_value')->orWhereNotNull('date_value')->orWhere(fn ($na) => $na->where('not_applicable', true)->whereHas('indicator', fn ($indicator) => $indicator->whereNotIn('reporting_table_id', ReportingTable::whereIn('code', ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'])->select('id')))))])
             ->where('reporting_year_id', $data['reporting_year_id'])
             ->where('region_id', $regionId)
             ->get()
@@ -330,6 +333,10 @@ class SubmissionController extends Controller
             abort_unless($submission->status === 'not_started', 409, 'The submission is locked.');
             abort_if($submission->version !== $data['version'], 409, 'The submission version is stale.');
 
+            if ($table->code === 'T06') {
+                $this->validateTableSixPairs($submission, $table, $data['values']);
+            }
+
             $indicators = $table->indicators->keyBy('id');
             foreach ($data['values'] as $item) {
                 $indicator = $indicators->get($item['indicator_id']);
@@ -337,7 +344,7 @@ class SubmissionController extends Controller
                     'submission_id' => $submission->id,
                     'indicator_id' => $indicator->id,
                 ]);
-                if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true) && $value->not_applicable && blank($item['value'] ?? null)) {
+                if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'], true) && $value->not_applicable && blank($item['value'] ?? null)) {
                     $item['value'] = 0;
                 }
                 $attributes = $this->valueAttributes($item, $indicator);
@@ -356,7 +363,7 @@ class SubmissionController extends Controller
                 }
             }
 
-            if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true)) {
+            if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'], true)) {
                 $submitted = collect($data['values'])->pluck('indicator_id');
                 $legacyValues = IndicatorValue::where('submission_id', $submission->id)
                     ->where('not_applicable', true)
@@ -479,7 +486,7 @@ class SubmissionController extends Controller
                     }
                 }],
                 'value' => $indicator ? match ($indicator->data_type) {
-                    'numeric' => $table->code === 'T05' ? ['nullable', 'integer', 'min:0'] : ['nullable', 'numeric'],
+                    'numeric' => in_array($table->code, ['T05', 'T06'], true) ? ['nullable', 'integer', 'min:0'] : ['nullable', 'numeric'],
                     'date' => ['nullable', 'date_format:Y-m-d'],
                     default => ['nullable', 'string'],
                 } : ['nullable'],
@@ -489,7 +496,7 @@ class SubmissionController extends Controller
                     }
                 }],
                 'not_applicable' => [function ($attribute, $value, $fail) use ($item, $table) {
-                    if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true) && ($item['not_applicable'] ?? false)) {
+                    if (in_array($table->code, ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'], true) && ($item['not_applicable'] ?? false)) {
                         $fail('Tidak Berlaku tidak tersedia untuk tabel numerik ini. Isi 0 jika nilainya nol.');
                     }
                 }],
@@ -511,7 +518,7 @@ class SubmissionController extends Controller
             }
 
             $value = trim($item['value']);
-            if ($table->code === 'T05') {
+            if (in_array($table->code, ['T05', 'T06'], true)) {
                 $item['value'] = $value;
 
                 return $item;
@@ -552,7 +559,7 @@ class SubmissionController extends Controller
             ->filter(function (Indicator $indicator) use ($values, $submission) {
                 $value = $values->get($indicator->id);
 
-                return ! $value || (in_array($submission->reportingTable->code, ['T01', 'T02', 'T03', 'T04', 'T05'], true) && $value->not_applicable)
+                return ! $value || (in_array($submission->reportingTable->code, ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'], true) && $value->not_applicable)
                     || ($value->not_applicable
                     ? blank($value->not_applicable_reason)
                     : blank($value->{$indicator->data_type.'_value'}));
@@ -560,6 +567,30 @@ class SubmissionController extends Controller
             ->pluck('code');
 
         abort_if($missing->isNotEmpty(), 422, 'Required indicators are incomplete: '.$missing->join(', '));
+    }
+
+    private function validateTableSixPairs(Submission $submission, ReportingTable $table, array $submitted): void
+    {
+        $submittedValues = collect($submitted)->keyBy('indicator_id');
+        $storedValues = $submission->values()->get()->keyBy('indicator_id');
+        foreach (['UMUM', 'KHUSUS'] as $kind) {
+            $values = [];
+            foreach (["RS_{$kind}_JUMLAH", "RS_{$kind}_MAMPU_GADAR_LEVEL_I"] as $code) {
+                $indicator = $table->indicators->firstWhere('code', $code);
+                $item = $indicator ? $submittedValues->get($indicator->id) : null;
+                $stored = $indicator ? $storedValues->get($indicator->id) : null;
+                $value = $item !== null
+                    ? ($item['value'] ?? null)
+                    : ($stored && ! $stored->not_applicable ? $stored->numeric_value : null);
+                $values[] = blank($value) ? null : (int) $value;
+            }
+
+            if ($values[0] !== null && $values[1] !== null && $values[1] > $values[0]) {
+                throw ValidationException::withMessages([
+                    'values' => 'Jumlah rumah sakit yang mampu Gadar Level I tidak boleh melebihi jumlah rumah sakit.',
+                ]);
+            }
+        }
     }
 
     private function transition(

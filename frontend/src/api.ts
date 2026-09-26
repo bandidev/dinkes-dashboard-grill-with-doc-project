@@ -79,6 +79,8 @@ export type ReportingTableDetail = ReportingTable & {
   headerCandidates: string[]
   provinceDenominators?: { outpatient_l: string; outpatient_p: string; inpatient_l: string; inpatient_p: string; outpatient_total?: string; inpatient_total?: string }
   coverageValues?: Record<string, number | null>
+  provinceCompletedRegionCount?: number
+  provinceRegionCount?: number
 }
 
 export type WorksheetRow = {
@@ -383,7 +385,7 @@ export const api = {
   async provinceTable(token: string, id: string, year: number): Promise<ReportingTableDetail | null> {
     const { reportingYear } = await reportingContext(token, year)
     const item = (await submissionList(token, reportingYear.id)).find((candidate) => String(candidate.reporting_table.id) === id)
-    if (!item || !['T02', 'T03', 'T04', 'T05'].includes(item.reporting_table.code)) return null
+    if (!item || !['T02', 'T03', 'T04', 'T05', 'T06'].includes(item.reporting_table.code)) return null
     const table = item.reporting_table
     const province = table.mapping_status === 'ready'
       ? await request<ApiProvince>(`/reporting-tables/${id}/province`, {}, token)
@@ -396,9 +398,11 @@ export const api = {
       description: table.description || 'Rekap Provinsi Kepulauan Bangka Belitung.',
       year: reportingYear.year,
       region: 'Provinsi Kepulauan Bangka Belitung',
-      completion: table.code === 'T05'
+      completion: ['T05', 'T06'].includes(table.code)
         ? province?.region_count ? Math.round((province.complete_region_count || 0) / province.region_count * 100) : 0
         : province?.base_count ? Math.round(province.complete_base_count / province.base_count * 100) : 0,
+      provinceCompletedRegionCount: province?.complete_region_count || 0,
+      provinceRegionCount: province?.region_count || 0,
       rows: (province?.table.indicators || []).map((indicator) => ({
         id: String(indicator.id), code: indicator.code, name: indicator.name,
         category: indicator.categories ? Object.values(indicator.categories).join(' • ') : '',
@@ -496,9 +500,9 @@ export const api = {
         reporting_table_id: Number(detail.reportingTableId),
         version: detail.version,
         values: detail.rows.filter((row) => row.kind === 'base').map((row) => ({
-          indicator_id: Number(row.id), value: ['T01', 'T02', 'T03', 'T04', 'T05'].includes(detail.group) && row.notApplicable && !row.value.trim() ? 0 : row.value || null,
-          not_applicable: ['T01', 'T02', 'T03', 'T04', 'T05'].includes(detail.group) ? false : row.notApplicable,
-          not_applicable_reason: ['T01', 'T02', 'T03', 'T04', 'T05'].includes(detail.group) ? null : row.notApplicable ? row.notApplicableReason : null,
+          indicator_id: Number(row.id), value: ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'].includes(detail.group) && row.notApplicable && !row.value.trim() ? 0 : row.value || null,
+          not_applicable: ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'].includes(detail.group) ? false : row.notApplicable,
+          not_applicable_reason: ['T01', 'T02', 'T03', 'T04', 'T05', 'T06'].includes(detail.group) ? null : row.notApplicable ? row.notApplicableReason : null,
         })),
       }),
     }, token)

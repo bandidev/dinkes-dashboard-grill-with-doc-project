@@ -67,10 +67,10 @@ class WorkbookCatalogImporterTest extends TestCase
         }
     }
 
-    public function test_reimport_preserves_ready_table_two_to_five_mappings(): void
+    public function test_reimport_preserves_ready_table_two_to_six_mappings(): void
     {
         $year = ReportingYear::create(['year' => 2024, 'status' => 'open']);
-        foreach (['T02', 'T03', 'T04', 'T05'] as $code) {
+        foreach (['T02', 'T03', 'T04', 'T05', 'T06'] as $code) {
             ReportingTable::create([
                 'reporting_year_id' => $year->id,
                 'code' => $code,
@@ -91,6 +91,9 @@ class WorkbookCatalogImporterTest extends TestCase
         $sheetFive = $workbook->createSheet();
         $sheetFive->setTitle('5');
         $sheetFive->setCellValue('A3', 'TABEL 5 UJI');
+        $sheetSix = $workbook->createSheet();
+        $sheetSix->setTitle('6');
+        $sheetSix->setCellValue('A3', 'TABEL 6 UJI');
         (new Xlsx($workbook))->save($path);
 
         try {
@@ -99,6 +102,7 @@ class WorkbookCatalogImporterTest extends TestCase
             $this->assertDatabaseHas('reporting_tables', ['reporting_year_id' => $year->id, 'code' => 'T03', 'mapping_status' => 'ready']);
             $this->assertDatabaseHas('reporting_tables', ['reporting_year_id' => $year->id, 'code' => 'T04', 'mapping_status' => 'ready']);
             $this->assertDatabaseHas('reporting_tables', ['reporting_year_id' => $year->id, 'code' => 'T05', 'mapping_status' => 'ready']);
+            $this->assertDatabaseHas('reporting_tables', ['reporting_year_id' => $year->id, 'code' => 'T06', 'mapping_status' => 'ready']);
         } finally {
             $workbook->disconnectWorksheets();
             unlink($path);
